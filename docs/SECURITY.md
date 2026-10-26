@@ -18,11 +18,14 @@
 ## Salariés et équipes (lot 3)
 - La fiche salarié est indépendante du compte applicatif. Un compte ne peut être lié qu'à un seul salarié ; la fiche et son historique survivent à la désactivation du compte.
 - Les permissions `employees.view`, `employees.manage`, `teams.view` et `teams.manage` sont réservées au Bureau/Direction. L'Administrateur technique n'obtient aucun droit RH. Chaque service métier revérifie la permission de l'acteur, y compris pour un appel direct hors interface.
-- Une affectation ou une responsabilité doit être entièrement couverte par une période d'emploi. Les chevauchements de périodes, d'affectations principales et de responsabilités principales sont refusés, y compris en cas d'écritures concurrentes grâce à un verrou MySQL ciblé et une revalidation transactionnelle.
+- Une affectation ou une responsabilité doit être entièrement couverte par une période d'emploi. Les chevauchements de périodes, d'affectations principales et de responsabilités principales sont refusés, y compris en cas d'écritures concurrentes grâce à des verrous MySQL ciblés et une revalidation transactionnelle.
+- Un salarié ne peut être responsable principal que d'une seule équipe à la fois. Les responsabilités sur des périodes disjointes ou adjacentes restent autorisées.
 - Un responsable principal doit avoir un compte actif et le rôle `chef_equipe` ou `conducteur_travaux` pendant sa responsabilité. Le retrait du rôle, la désactivation du compte ou la déliaison du compte sont refusés tant qu'une responsabilité non terminée subsiste ; une réaffectation ou une clôture explicite est requise.
 - Une sortie est refusée tant que des affectations ou responsabilités resteraient actives après la date de sortie. Aucune affectation n'est tronquée automatiquement. Une affectation future peut être annulée avec motif ; une affectation commencée se clôt avec une date de fin. L'historique est conservé dans les deux cas.
-- Aucune donnée médicale, aucun document RH et aucun justificatif ne sont stockés dans ce lot. La sortie ne désactive pas automatiquement le compte applicatif : cette opération reste distincte et auditée au lot 2.
-- Le verrou salarié utilise `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS` (5 secondes par défaut) ; en cas d'attente dépassée, l'écriture est refusée plutôt que validée sans contrôle.
+- La sortie peut désactiver le compte applicatif lié uniquement sur option explicite et confirmée. Cette désactivation est immédiate, révoque les sessions et reste dans la même transaction que la sortie ; sans option, le compte est conservé. Elle n'est acceptée que pour une sortie effective aujourd'hui ou dans le passé.
+- Aucune donnée médicale, aucun document RH et aucun justificatif ne sont stockés dans ce lot.
+- Les périodes d'emploi sont append-only : le modèle refuse les modifications autres que la clôture d'une période ouverte et refuse toute suppression. Aucune procédure de correction rétroactive n'est définie à ce stade.
+- Les verrous nommés utilisent `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS` (5 secondes par défaut) ; en cas d'attente dépassée, l'écriture est refusée plutôt que validée sans contrôle. L'ordre est équipe puis salariés triés par identifiant.
 
 ## Données et audit
 - Minimiser les données personnelles et la visibilité des données d’absence.

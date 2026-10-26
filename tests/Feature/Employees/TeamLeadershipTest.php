@@ -11,6 +11,7 @@ use App\Services\Accounts\AccountAdministration;
 use App\Services\Audit\AuditLogger;
 use App\Services\Employees\EmployeeService;
 use App\Services\Employees\TeamLeadershipService;
+use Illuminate\Support\Facades\DB;
 
 function leaderEmployee(
     Role $role = Role::ChefEquipe,
@@ -93,6 +94,79 @@ it('refuses two overlapping principal responsibilities for the same team', funct
     expect(TeamLeadership::query()->where('team_id', $team->id)->count())->toBe(1);
 });
 
+it('refuses the same employee as principal of two teams on overlapping periods', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $teamA = Team::factory()->create(['name' => 'Team A']);
+    $teamB = Team::factory()->create(['name' => 'Team B']);
+    $employee = leaderEmployee();
+    $service = app(TeamLeadershipService::class);
+
+    $service->assign($teamA, $employee, now()->subMonth()->toDateString(), null, $actor);
+
+    expect(fn () => $service->assign($teamB, $employee, now()->toDateString(), null, $actor))
+        ->toThrow(RuntimeException::class, 'responsable principal');
+
+    expect(TeamLeadership::query()->where('employee_id', $employee->id)->count())->toBe(1);
+});
+
+it('allows the same employee to lead different teams on disjoint or adjacent periods', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $teamA = Team::factory()->create(['name' => 'Team A']);
+    $teamB = Team::factory()->create(['name' => 'Team B']);
+    $teamC = Team::factory()->create(['name' => 'Team C']);
+    $employee = leaderEmployee();
+    $service = app(TeamLeadershipService::class);
+
+    $firstEnd = now()->subMonths(3)->startOfDay();
+    $secondStart = now()->subMonths(2)->startOfDay();
+    $adjacentStart = $secondStart->copy()->addMonth()->startOfDay();
+    $adjacentEnd = $adjacentStart->copy()->addMonth()->subDay()->startOfDay();
+
+    $service->assign(
+        $teamA,
+        $employee,
+        now()->subMonths(6)->startOfDay()->toDateString(),
+        $firstEnd->toDateString(),
+        $actor,
+    );
+    $service->assign(
+        $teamB,
+        $employee,
+        $secondStart->toDateString(),
+        $secondStart->copy()->addMonth()->subDay()->toDateString(),
+        $actor,
+    );
+    $service->assign(
+        $teamC,
+        $employee,
+        $adjacentStart->toDateString(),
+        $adjacentEnd->toDateString(),
+        $actor,
+    );
+
+    expect(TeamLeadership::query()->where('employee_id', $employee->id)->count())->toBe(3);
+});
+
+it('refuses a reassignment that would make the new leader responsible for two teams', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $targetTeam = Team::factory()->create(['name' => 'Target Team']);
+    $otherTeam = Team::factory()->create(['name' => 'Other Team']);
+    $currentLeader = leaderEmployee();
+    $newLeader = leaderEmployee(Role::Conducteur);
+    $service = app(TeamLeadershipService::class);
+
+    $current = $service->assign($targetTeam, $currentLeader, now()->subMonth()->toDateString(), null, $actor);
+    $other = $service->assign($otherTeam, $newLeader, now()->subMonth()->toDateString(), null, $actor);
+
+    expect(fn () => $service->reassign($targetTeam, $newLeader, now()->toDateString(), $actor, 'Test de conflit.'))
+        ->toThrow(RuntimeException::class, 'responsable principal');
+
+    expect($current->fresh()->end_date)->toBeNull()
+        ->and($current->fresh()->employee_id)->toBe($currentLeader->id)
+        ->and($targetTeam->fresh()->currentLeadership()?->employee_id)->toBe($currentLeader->id)
+        ->and($other->fresh()->end_date)->toBeNull();
+});
+
 it('reassigns a leader explicitly and preserves the previous responsibility', function () {
     $actor = User::factory()->bureauDirection()->create();
     $team = Team::factory()->create(['name' => 'Équipe A']);
@@ -121,6 +195,74 @@ it('reassigns a leader explicitly and preserves the previous responsibility', fu
         'subject_id' => (string) $replacement->id,
     ]);
     expect(app(AuditLogger::class)->verify()->isValid)->toBeTrue();
+});
+
+it('serializes reassignment and closure with the employee locks', function () {
+    config(['planning.employees.lock_timeout_seconds' => 1]);
+
+    $actor = User::factory()->bureauDirection()->create();
+    $team = Team::factory()->create(['name' => 'Locked Team']);
+    $currentLeader = leaderEmployee();
+    $newLeader = leaderEmployee(Role::Conducteur);
+    $service = app(TeamLeadershipService::class);
+
+    $current = $service->assign($team, $currentLeader, now()->subMonth()->toDateString(), null, $actor);
+
+    config(['database.connections.team_lock_probe' => config('database.connections.mysql')]);
+    $probe = DB::connection('team_lock_probe');
+    $lockName = 'planning.employee.'.$currentLeader->id;
+
+    $acquired = $probe->selectOne('SELECT GET_LOCK(?, 0) AS acquired', [$lockName]);
+    expect((int) $acquired->acquired)->toBe(1);
+
+    try {
+        expect(fn () => $service->reassign($team, $newLeader, now()->toDateString(), $actor, 'Test de verrou.'))
+            ->toThrow(RuntimeException::class, 'autre opération');
+
+        expect($current->fresh()->end_date)->toBeNull()
+            ->and($team->fresh()->currentLeadership()?->employee_id)->toBe($currentLeader->id);
+
+        expect(fn () => $service->close($current, now()->toDateString(), $actor, 'Test de verrou.'))
+            ->toThrow(RuntimeException::class, 'autre opération');
+
+        expect($current->fresh()->end_date)->toBeNull();
+    } finally {
+        $probe->selectOne('SELECT RELEASE_LOCK(?) AS released', [$lockName]);
+        $probe->disconnect();
+    }
+
+    $service->close($current->fresh(), now()->toDateString(), $actor, 'Fin de mission.');
+
+    expect($current->fresh()->end_date->toDateString())->toBe(now()->toDateString());
+});
+
+it('serializes role removal with the employee lock', function () {
+    config(['planning.employees.lock_timeout_seconds' => 1]);
+
+    $bureau = User::factory()->bureauDirection()->create();
+    $team = Team::factory()->create(['name' => 'Role Lock Team']);
+    $leader = leaderEmployee();
+    app(TeamLeadershipService::class)->assign($team, $leader, now()->subMonth()->toDateString(), null, $bureau);
+
+    config(['database.connections.role_lock_probe' => config('database.connections.mysql')]);
+    $probe = DB::connection('role_lock_probe');
+    $lockName = 'planning.employee.'.$leader->id;
+    $acquired = $probe->selectOne('SELECT GET_LOCK(?, 0) AS acquired', [$lockName]);
+
+    expect((int) $acquired->acquired)->toBe(1);
+
+    try {
+        expect(fn () => app(AccountAdministration::class)->changeRole(
+            $leader->user,
+            Role::Ouvrier,
+            $bureau,
+        ))->toThrow(RuntimeException::class, 'autre opération');
+
+        expect($leader->user->fresh()->role)->toBe(Role::ChefEquipe);
+    } finally {
+        $probe->selectOne('SELECT RELEASE_LOCK(?) AS released', [$lockName]);
+        $probe->disconnect();
+    }
 });
 
 it('refuses role removal while a responsibility remains active, then allows it after reassignment', function () {

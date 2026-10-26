@@ -3,6 +3,7 @@
 use App\Enums\AuditAction;
 use App\Enums\Role;
 use App\Models\Employee;
+use App\Models\EmploymentPeriod;
 use App\Models\User;
 use App\Services\Employees\EmployeeService;
 use App\Services\Employees\EmploymentPeriodService;
@@ -80,6 +81,42 @@ it('creates a rehire as a new period without rewriting history or reactivating a
         'action' => AuditAction::EmployeeRehired->value,
         'subject_id' => (string) $employee->id,
     ]);
+});
+
+it('keeps employment periods append-only at the model level', function () {
+    $closed = EmploymentPeriod::factory()->create([
+        'start_date' => '2026-01-01',
+        'end_date' => '2026-06-30',
+    ]);
+    $open = EmploymentPeriod::factory()->create([
+        'start_date' => '2026-01-01',
+        'end_date' => null,
+    ]);
+
+    expect(fn () => $closed->update(['start_date' => '2025-12-01']))
+        ->toThrow(LogicException::class);
+
+    expect(fn () => $open->update(['start_date' => '2025-12-01']))
+        ->toThrow(LogicException::class);
+
+    expect(fn () => $closed->delete())
+        ->toThrow(LogicException::class);
+
+    expect($closed->fresh()->start_date->toDateString())->toBe('2026-01-01')
+        ->and($closed->fresh()->end_date->toDateString())->toBe('2026-06-30')
+        ->and($open->fresh()->start_date->toDateString())->toBe('2026-01-01');
+});
+
+it('refuses a direct model closure before the employment start date', function () {
+    $period = EmploymentPeriod::factory()->create([
+        'start_date' => '2026-06-30',
+        'end_date' => null,
+    ]);
+
+    expect(fn () => $period->update(['end_date' => '2026-06-29']))
+        ->toThrow(LogicException::class, 'procédure métier');
+
+    expect($period->fresh()->end_date)->toBeNull();
 });
 
 it('refuses period operations to unauthorized roles', function (Role $role) {

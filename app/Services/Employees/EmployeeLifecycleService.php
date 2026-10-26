@@ -8,8 +8,10 @@ use App\Exceptions\EmployeeExitBlockedException;
 use App\Models\Employee;
 use App\Models\EmploymentPeriod;
 use App\Models\User;
+use App\Services\Accounts\AccountAdministration;
 use App\Services\Audit\AuditLogger;
 use App\Support\DatePeriod;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -28,16 +30,27 @@ class EmployeeLifecycleService
         private readonly EmploymentPeriodService $periods,
         private readonly TeamLeadershipService $leaderships,
         private readonly EmployeeMutationLock $lock,
+        private readonly AccountAdministration $accounts,
     ) {}
 
-    public function exit(Employee $employee, string $exitDate, User $actor): EmploymentPeriod
-    {
+    public function exit(
+        Employee $employee,
+        string $exitDate,
+        User $actor,
+        bool $deactivateAccount = false,
+    ): EmploymentPeriod {
         $this->assertCanManage($actor);
 
         $exit = DatePeriod::parse($exitDate);
 
-        return $this->lock->run($employee, function () use ($employee, $exit, $exitDate, $actor): EmploymentPeriod {
-            return DB::transaction(function () use ($employee, $exit, $exitDate, $actor): EmploymentPeriod {
+        if ($deactivateAccount && $exit->gt(CarbonImmutable::today())) {
+            throw new RuntimeException(
+                'La désactivation immédiate du compte n’est possible que pour une sortie effective aujourd’hui ou dans le passé.',
+            );
+        }
+
+        return $this->lock->run($employee, function () use ($employee, $exit, $exitDate, $actor, $deactivateAccount): EmploymentPeriod {
+            return DB::transaction(function () use ($employee, $exit, $exitDate, $actor, $deactivateAccount): EmploymentPeriod {
                 /** @var Employee $employee */
                 $employee = Employee::query()->whereKey($employee->getKey())->firstOrFail();
                 $period = $this->periods->openPeriod($employee);
@@ -56,7 +69,24 @@ class EmployeeLifecycleService
                     throw new EmployeeExitBlockedException($blockers);
                 }
 
-                $period->forceFill(['end_date' => $exit->toDateString()])->save();
+                EmploymentPeriod::authorizeClosure(function () use ($period, $exit): void {
+                    $period->forceFill(['end_date' => $exit->toDateString()])->save();
+                });
+
+                $accountLinked = $employee->user_id !== null;
+                $accountDeactivated = false;
+
+                if ($deactivateAccount && $accountLinked) {
+                    $user = $employee->user;
+
+                    if ($user instanceof User) {
+                        $accountDeactivated = $this->accounts->deactivateForEmployeeExit(
+                            $user,
+                            'Désactivation demandée lors de la sortie du salarié.',
+                            $actor,
+                        );
+                    }
+                }
 
                 $this->audit->record(
                     AuditAction::EmployeeExited,
@@ -65,6 +95,9 @@ class EmployeeLifecycleService
                         'employment_period_id' => $period->getKey(),
                         'start_date' => $period->start_date->toDateString(),
                         'end_date' => $exit->toDateString(),
+                        'account_linked' => $accountLinked,
+                        'account_deactivation_requested' => $deactivateAccount,
+                        'account_deactivated' => $accountDeactivated,
                     ],
                     null,
                     $actor,

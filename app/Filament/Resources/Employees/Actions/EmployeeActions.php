@@ -12,6 +12,7 @@ use App\Services\Employees\EmploymentPeriodService;
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Toggle;
 use Filament\Notifications\Notification;
 use Throwable;
 
@@ -135,6 +136,16 @@ class EmployeeActions
                     ->label('Date de sortie')
                     ->required()
                     ->default(now()->toDateString()),
+
+                Toggle::make('deactivate_account')
+                    ->label('Désactiver le compte applicatif associé')
+                    ->helperText(
+                        'Le compte sera désactivé immédiatement et ses sessions révoquées. '
+                        .'La fiche salarié et l’historique sont conservés. '
+                        .'Ne confirmez que si l’accès doit être retiré.',
+                    )
+                    ->default(false)
+                    ->visible(fn (Employee $record): bool => $record->user?->isActive() ?? false),
             ])
             ->visible(fn (Employee $record): bool => $record->currentEmploymentPeriod() !== null
                 && (auth()->user()?->can('recordExit', $record) ?? false))
@@ -142,14 +153,22 @@ class EmployeeActions
                 try {
                     /** @var User $actor */
                     $actor = auth()->user();
+                    $deactivateAccount = (bool) ($data['deactivate_account'] ?? false);
+                    $hadActiveAccount = $record->user?->isActive() ?? false;
 
                     app(EmployeeLifecycleService::class)->exit(
                         $record,
                         (string) $data['exit_date'],
                         $actor,
+                        $deactivateAccount,
                     );
 
-                    Notification::make()->success()->title('Sortie enregistrée.')->send();
+                    Notification::make()
+                        ->success()
+                        ->title($deactivateAccount && $hadActiveAccount
+                            ? 'Sortie enregistrée et compte désactivé.'
+                            : 'Sortie enregistrée.')
+                        ->send();
                 } catch (EmployeeExitBlockedException $exception) {
                     Notification::make()
                         ->danger()

@@ -36,7 +36,7 @@ Le dépôt contient une application Laravel 13.38 avec Livewire 4.4, Filament 5.
 **Point d'arrêt humain :** valider les permissions avant les modules métier.
 
 ## Lot 3 — Salariés, périodes d’emploi et équipes
-**Statut :** implémenté le 26/10/2026, en attente de validation humaine. 105 tests, 571 assertions, Pint et Larastan verts. Aucune mise en production n’a été effectuée.
+**Statut :** implémenté le 26/10/2026 puis corrigé après audit indépendant et revue technique complémentaire, en attente de validation humaine. 118 tests, 635 assertions, Pint et Larastan verts. Aucune mise en production n’a été effectuée.
 **Travaux :** fiche salarié, périodes d’emploi multiples, équipes principales, responsables, affectations temporaires datées, sorties/retours et historique.  
 **Tests :** unicité des valeurs requises, blocage des affectations après sortie, conservation d’historique, retour sans transfert automatique des compteurs/accès.  
 **Acceptation :** cycle de vie salarié traçable.  

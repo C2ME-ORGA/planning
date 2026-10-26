@@ -88,10 +88,13 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
 -   **Périodes d'emploi** : `employment_periods` (`employee_id`, `start_date`,
     `end_date` nullable), dates inclusives, contrainte SQL de cohérence et
     index. Les périodes sont append-only ; une réembauche crée une nouvelle
-    période. L'absence de chevauchement est vérifiée par
-    `EmploymentPeriodService` dans une transaction protégée par un verrou
-    MySQL nommé (`EmployeeMutationLock`). MySQL ne fournit pas d'exclusion de
-    plages : la contrainte SQL seule ne suffit pas.
+    période. Le modèle `EmploymentPeriod` refuse toute mise à jour autre que la
+    clôture d'une période ouverte, ainsi que toute suppression. L'absence de
+    chevauchement est vérifiée par `EmploymentPeriodService` dans une
+    transaction protégée par un verrou MySQL nommé (`EmployeeMutationLock`).
+    MySQL ne fournit pas d'exclusion de plages : la contrainte SQL seule ne
+    suffit pas. Aucune procédure de correction rétroactive n'est implémentée
+    faute de règles métier ; voir `docs/OPERATIONS.md`.
 -   **Équipes** : `teams` ne porte pas de `leader_id` écrasable. Les
     affectations sont dans `team_assignments` (`kind` = `primary` ou
     `temporary`) et les responsabilités dans `team_leaderships`. Ces tables
@@ -101,19 +104,30 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
 -   **Cohérence** : une affectation ou une responsabilité doit être entièrement
     couverte par une période d'emploi. Une affectation temporaire est un
     enregistrement distinct et ne modifie jamais l'équipe principale. Une
-    équipe ne peut avoir qu'une responsabilité principale à la fois.
+    équipe ne peut avoir qu'une responsabilité principale à la fois, et un
+    salarié ne peut être responsable principal que d'une seule équipe à la fois,
+    toutes équipes confondues.
 -   **Responsable principal** : salarié couvert par une période d'emploi,
     compte actif lié, rôle `chef_equipe` ou `conducteur_travaux`. La
     réaffectation est explicite : l'ancienne responsabilité ouverte est
     clôturée la veille de la date d'effet et l'historique est conservé. Le
     retrait du rôle, la désactivation du compte et la déliaison du compte sont
     refusés tant qu'une responsabilité non terminée subsiste.
+-   **Concurrence** : les opérations de responsabilité prennent d'abord un
+    verrou nommé sur l'équipe (`TeamMutationLock`), puis les verrous salariés
+    (`EmployeeMutationLock::runMany`) triés par identifiant. L'administration
+    des comptes prend le verrou salarié avant de verrouiller la ligne `users`.
+    Les règles sont revalidées après acquisition des verrous ; une attente
+    dépassée refuse l'écriture.
 -   **Sortie** : `EmployeeLifecycleService` clôt la période d'emploi ouverte.
     Avant écriture, il liste les affectations et responsabilités qui
     resteraient actives après la date de sortie et refuse l'opération avec
     `EmployeeExitBlockedException`. Aucune affectation n'est tronquée
-    automatiquement. La sortie ne désactive pas automatiquement le compte
-    applicatif : cette décision reste explicite au lot 2.
+    automatiquement. Le même service peut, sur demande explicite, désactiver le
+    compte applicatif lié dans la même transaction : la sortie, la révocation
+    des sessions, la désactivation et leurs audits sont alors atomiques. Sans
+    demande explicite, le compte reste inchangé. Une désactivation immédiate
+    n'est acceptée que pour une sortie effective aujourd'hui ou dans le passé.
 -   **Permissions** : `employees.view`, `employees.manage`, `teams.view`,
     `teams.manage`, accordées uniquement au Bureau/Direction. L'Administrateur
     technique conserve uniquement `audit.view` ; les autres rôles n'ont pas

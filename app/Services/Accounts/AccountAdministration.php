@@ -5,9 +5,12 @@ namespace App\Services\Accounts;
 use App\Enums\AuditAction;
 use App\Enums\Permission;
 use App\Enums\Role;
+use App\Models\Employee;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
+use App\Services\Employees\EmployeeMutationLock;
 use App\Services\Employees\TeamLeadershipService;
+use Closure;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -17,6 +20,7 @@ class AccountAdministration
         private readonly AuditLogger $audit,
         private readonly SessionRevoker $sessions,
         private readonly TeamLeadershipService $leaderships,
+        private readonly EmployeeMutationLock $employeeLocks,
     ) {}
 
     public function deactivate(User $target, string $reason, User $actor): void
@@ -25,33 +29,58 @@ class AccountAdministration
         $this->assertReason($reason);
         $this->assertNotSelf($target, $actor, 'Un compte ne peut pas se désactiver lui-même.');
 
+        $this->withEmployeeLock($target, function () use ($target, $reason, $actor): void {
+            DB::transaction(function () use ($target, $reason, $actor): void {
+                /** @var User $target */
+                $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
+
+                if (! $target->isActive()) {
+                    throw new RuntimeException('Ce compte est déjà désactivé.');
+                }
+
+                $this->assertNotLastBureauDirection($target);
+                $this->leaderships->assertDeactivationAllowed($target);
+                $this->applyDeactivation($target, $reason, $actor);
+            });
+        });
+    }
+
+    /**
+     * Désactivation demandée explicitement lors de la sortie d'un salarié.
+     *
+     * La sortie a déjà vérifié qu'aucune affectation ni responsabilité ne
+     * reste active après la date de sortie. Ce point d'entrée conserve donc les
+     * contrôles de compte (permission, dernier Bureau, non-auto-désactivation)
+     * sans rejouer le contrôle de responsabilité, qui serait bloquant pour une
+     * responsabilité se terminant le jour même de la sortie.
+     *
+     * @return bool Vrai si le compte a effectivement été désactivé.
+     */
+    public function deactivateForEmployeeExit(User $target, string $reason, User $actor): bool
+    {
+        $this->assertCan($actor, Permission::AccountsDeactivate);
+        $this->assertReason($reason);
+        $this->assertNotSelf($target, $actor, 'Un compte ne peut pas se désactiver lui-même.');
+
         if (! $target->isActive()) {
-            throw new RuntimeException('Ce compte est déjà désactivé.');
+            return false;
         }
 
-        $this->assertNotLastBureauDirection($target);
-        $this->leaderships->assertDeactivationAllowed($target);
+        $this->withEmployeeLock($target, function () use ($target, $reason, $actor): void {
+            DB::transaction(function () use ($target, $reason, $actor): void {
+                /** @var User $target */
+                $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
 
-        DB::transaction(function () use ($target, $reason, $actor): void {
-            $target->forceFill([
-                'is_active' => false,
-                'deactivated_at' => now(),
-                'deactivation_reason' => $reason,
-            ])->save();
+                if (! $target->isActive()) {
+                    throw new RuntimeException('Ce compte est déjà désactivé.');
+                }
 
-            $revoked = $this->sessions->revoke($target);
-
-            $this->audit->record(
-                AuditAction::AccountDeactivated,
-                $target,
-                [
-                    'is_active' => ['old' => true, 'new' => false],
-                    'sessions_revoked' => $revoked,
-                ],
-                $reason,
-                $actor,
-            );
+                $this->assertNotLastBureauDirection($target);
+                $this->applyDeactivation($target, $reason, $actor);
+            });
         });
+
+        return true;
     }
 
     public function reactivate(User $target, string $reason, User $actor): void
@@ -60,25 +89,32 @@ class AccountAdministration
         $this->assertReason($reason);
         $this->assertNotSelf($target, $actor, 'Un compte ne peut pas se réactiver lui-même.');
 
-        if ($target->isActive()) {
-            throw new RuntimeException('Ce compte est déjà actif.');
-        }
+        $this->withEmployeeLock($target, function () use ($target, $reason, $actor): void {
+            DB::transaction(function () use ($target, $reason, $actor): void {
+                /** @var User $target */
+                $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
 
-        $target->forceFill([
-            'is_active' => true,
-            'deactivated_at' => null,
-            'deactivation_reason' => null,
-        ])->save();
+                if ($target->isActive()) {
+                    throw new RuntimeException('Ce compte est déjà actif.');
+                }
 
-        $this->audit->record(
-            AuditAction::AccountReactivated,
-            $target,
-            ['is_active' => ['old' => false, 'new' => true]],
-            $reason,
-            $actor,
-        );
+                $target->forceFill([
+                    'is_active' => true,
+                    'deactivated_at' => null,
+                    'deactivation_reason' => null,
+                ])->save();
 
-        $this->sessions->revoke($target);
+                $this->audit->record(
+                    AuditAction::AccountReactivated,
+                    $target,
+                    ['is_active' => ['old' => false, 'new' => true]],
+                    $reason,
+                    $actor,
+                );
+
+                $this->sessions->revoke($target);
+            });
+        });
     }
 
     public function changeRole(User $target, Role $role, User $actor): void
@@ -90,17 +126,28 @@ class AccountAdministration
             return;
         }
 
-        if ($target->isBureauDirection() && $role !== Role::BureauDirection) {
-            $this->assertNotLastBureauDirection($target);
-        }
+        $this->withEmployeeLock($target, function () use ($target, $role): void {
+            DB::transaction(function () use ($target, $role): void {
+                /** @var User $target */
+                $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
 
-        // Une responsabilité d'équipe non terminée exige un rôle compatible.
-        $this->leaderships->assertRoleRemovalAllowed($target, $role);
+                if ($target->role === $role) {
+                    return;
+                }
 
-        $target->forceFill(['role' => $role])->save();
+                if ($target->isBureauDirection() && $role !== Role::BureauDirection) {
+                    $this->assertNotLastBureauDirection($target);
+                }
 
-        // Le journal est écrit par UserObserver (acteur = utilisateur courant).
-        $this->sessions->revoke($target);
+                // Une responsabilité d'équipe non terminée exige un rôle compatible.
+                $this->leaderships->assertRoleRemovalAllowed($target, $role);
+
+                $target->forceFill(['role' => $role])->save();
+
+                // Le journal est écrit par UserObserver (acteur = utilisateur courant).
+                $this->sessions->revoke($target);
+            });
+        });
     }
 
     public function resetMultiFactor(User $target, string $reason, User $actor): void
@@ -166,6 +213,41 @@ class AccountAdministration
         if ($length > 500) {
             throw new RuntimeException('Le motif ne peut pas dépasser 500 caractères.');
         }
+    }
+
+    private function applyDeactivation(User $target, string $reason, User $actor): void
+    {
+        $target->forceFill([
+            'is_active' => false,
+            'deactivated_at' => now(),
+            'deactivation_reason' => $reason,
+        ])->save();
+
+        $revoked = $this->sessions->revoke($target);
+
+        $this->audit->record(
+            AuditAction::AccountDeactivated,
+            $target,
+            [
+                'is_active' => ['old' => true, 'new' => false],
+                'sessions_revoked' => $revoked,
+            ],
+            $reason,
+            $actor,
+        );
+    }
+
+    private function withEmployeeLock(User $target, Closure $callback): void
+    {
+        $employee = Employee::query()->where('user_id', $target->getKey())->first();
+
+        if ($employee instanceof Employee) {
+            $this->employeeLocks->run($employee, $callback);
+
+            return;
+        }
+
+        $callback();
     }
 
     private function assertNotSelf(User $target, User $actor, string $message): void

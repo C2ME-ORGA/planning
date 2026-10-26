@@ -79,6 +79,31 @@ it('records an exit through the Filament action only after validation', function
         ->toBe(now()->toDateString());
 });
 
+it('deactivates the linked account through the exit action when explicitly confirmed', function () {
+    Filament::setCurrentPanel(Filament::getPanel('admin'));
+
+    $bureau = User::factory()->bureauDirection()->withMultiFactorAuthentication()->create();
+    $user = User::factory()->ouvrier()->create();
+    $employee = Employee::factory()->create(['user_id' => $user->id]);
+    EmploymentPeriod::factory()->for($employee)->create([
+        'start_date' => now()->subYear()->toDateString(),
+        'end_date' => null,
+    ]);
+
+    $this->actingAs($bureau);
+
+    Livewire::test(ViewEmployee::class, ['record' => $employee->id])
+        ->callAction('recordExit', data: [
+            'exit_date' => now()->toDateString(),
+            'deactivate_account' => true,
+        ])
+        ->assertHasNoErrors();
+
+    expect($user->fresh()->isActive())->toBeFalse()
+        ->and($employee->fresh()->employmentPeriods()->first()->end_date->toDateString())
+        ->toBe(now()->toDateString());
+});
+
 it('keeps the exit blocked through the Filament action while an assignment remains', function () {
     Filament::setCurrentPanel(Filament::getPanel('admin'));
 

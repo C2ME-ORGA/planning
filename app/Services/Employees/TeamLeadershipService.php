@@ -23,7 +23,8 @@ use RuntimeException;
  * La responsabilité est datée et historisée. Elle exige, pendant toute sa
  * période, une période d'emploi qui la couvre, un compte applicatif actif et un
  * rôle `chef_equipe` ou `conducteur_travaux`. Une seule responsabilité
- * principale peut couvrir une date donnée pour une équipe.
+ * principale peut couvrir une date donnée pour une équipe, et un salarié ne
+ * peut être responsable principal que d'une seule équipe à la fois.
  */
 class TeamLeadershipService
 {
@@ -31,6 +32,7 @@ class TeamLeadershipService
         private readonly AuditLogger $audit,
         private readonly EmploymentPeriodService $periods,
         private readonly EmployeeMutationLock $lock,
+        private readonly TeamMutationLock $teamLock,
     ) {}
 
     public function assign(
@@ -47,37 +49,40 @@ class TeamLeadershipService
         $end = DatePeriod::parseNullable($endDate);
         DatePeriod::assertOrder($start, $end);
 
-        return $this->lock->run($employee, function () use ($team, $employee, $start, $end, $actor, $reason): TeamLeadership {
-            return DB::transaction(function () use ($team, $employee, $start, $end, $actor, $reason): TeamLeadership {
-                /** @var Team $team */
-                $team = Team::query()->whereKey($team->getKey())->lockForUpdate()->firstOrFail();
-                /** @var Employee $employee */
-                $employee = Employee::query()->whereKey($employee->getKey())->firstOrFail();
+        return $this->teamLock->run($team, function () use ($team, $employee, $start, $end, $actor, $reason): TeamLeadership {
+            return $this->lock->run($employee, function () use ($team, $employee, $start, $end, $actor, $reason): TeamLeadership {
+                return DB::transaction(function () use ($team, $employee, $start, $end, $actor, $reason): TeamLeadership {
+                    /** @var Team $team */
+                    $team = Team::query()->whereKey($team->getKey())->lockForUpdate()->firstOrFail();
+                    /** @var Employee $employee */
+                    $employee = Employee::query()->whereKey($employee->getKey())->firstOrFail();
 
-                $this->assertEligible($employee, $start, $end);
-                $this->assertNoOverlap($team, $start, $end);
+                    $this->assertEligible($employee, $start, $end);
+                    $this->assertNoOverlap($team, $start, $end);
+                    $this->assertEmployeeNoOverlap($employee, $start, $end);
 
-                $leadership = TeamLeadership::query()->create([
-                    'team_id' => $team->getKey(),
-                    'employee_id' => $employee->getKey(),
-                    'start_date' => $start->toDateString(),
-                    'end_date' => $end?->toDateString(),
-                ]);
-
-                $this->audit->record(
-                    AuditAction::TeamLeaderAssigned,
-                    $leadership,
-                    [
+                    $leadership = TeamLeadership::query()->create([
                         'team_id' => $team->getKey(),
                         'employee_id' => $employee->getKey(),
                         'start_date' => $start->toDateString(),
                         'end_date' => $end?->toDateString(),
-                    ],
-                    $reason,
-                    $actor,
-                );
+                    ]);
 
-                return $leadership;
+                    $this->audit->record(
+                        AuditAction::TeamLeaderAssigned,
+                        $leadership,
+                        [
+                            'team_id' => $team->getKey(),
+                            'employee_id' => $employee->getKey(),
+                            'start_date' => $start->toDateString(),
+                            'end_date' => $end?->toDateString(),
+                        ],
+                        $reason,
+                        $actor,
+                    );
+
+                    return $leadership;
+                });
             });
         });
     }
@@ -102,72 +107,88 @@ class TeamLeadershipService
             throw new RuntimeException('La date de réaffectation ne peut pas être antérieure à aujourd’hui.');
         }
 
-        return $this->lock->run($newLeader, function () use ($team, $newLeader, $effective, $actor, $reason): TeamLeadership {
-            return DB::transaction(function () use ($team, $newLeader, $effective, $actor, $reason): TeamLeadership {
-                /** @var Team $team */
-                $team = Team::query()->whereKey($team->getKey())->lockForUpdate()->firstOrFail();
-                /** @var Employee $newLeader */
-                $newLeader = Employee::query()->whereKey($newLeader->getKey())->firstOrFail();
+        return $this->teamLock->run($team, function () use ($team, $newLeader, $effective, $actor, $reason): TeamLeadership {
+            $current = TeamLeadership::query()
+                ->where('team_id', $team->getKey())
+                ->whereNull('end_date')
+                ->whereNull('cancelled_at')
+                ->orderByDesc('start_date')
+                ->first();
 
-                $current = TeamLeadership::query()
-                    ->where('team_id', $team->getKey())
-                    ->whereNull('end_date')
-                    ->whereNull('cancelled_at')
-                    ->orderByDesc('start_date')
-                    ->lockForUpdate()
-                    ->first();
+            $employeeIds = [$newLeader->getKey()];
 
-                if ($current instanceof TeamLeadership) {
-                    if ($current->employee_id === $newLeader->getKey()) {
-                        throw new RuntimeException('Ce salarié est déjà le responsable principal de cette équipe.');
-                    }
+            if ($current instanceof TeamLeadership) {
+                $employeeIds[] = $current->employee_id;
+            }
 
-                    if ($effective->lte($current->start_date)) {
-                        throw new RuntimeException(
-                            'La date de réaffectation doit être postérieure au début de la responsabilité actuelle.',
+            return $this->lock->runMany($employeeIds, function () use ($team, $newLeader, $effective, $actor, $reason): TeamLeadership {
+                return DB::transaction(function () use ($team, $newLeader, $effective, $actor, $reason): TeamLeadership {
+                    /** @var Team $team */
+                    $team = Team::query()->whereKey($team->getKey())->lockForUpdate()->firstOrFail();
+                    /** @var Employee $newLeader */
+                    $newLeader = Employee::query()->whereKey($newLeader->getKey())->firstOrFail();
+
+                    $current = TeamLeadership::query()
+                        ->where('team_id', $team->getKey())
+                        ->whereNull('end_date')
+                        ->whereNull('cancelled_at')
+                        ->orderByDesc('start_date')
+                        ->lockForUpdate()
+                        ->first();
+
+                    if ($current instanceof TeamLeadership) {
+                        if ($current->employee_id === $newLeader->getKey()) {
+                            throw new RuntimeException('Ce salarié est déjà le responsable principal de cette équipe.');
+                        }
+
+                        if ($effective->lte($current->start_date)) {
+                            throw new RuntimeException(
+                                'La date de réaffectation doit être postérieure au début de la responsabilité actuelle.',
+                            );
+                        }
+
+                        $closingDate = $effective->subDay();
+                        $current->forceFill(['end_date' => $closingDate->toDateString()])->save();
+
+                        $this->audit->record(
+                            AuditAction::TeamLeaderClosed,
+                            $current,
+                            [
+                                'team_id' => $team->getKey(),
+                                'employee_id' => $current->employee_id,
+                                'end_date' => $closingDate->toDateString(),
+                            ],
+                            $reason ?? 'Clôture liée à une réaffectation.',
+                            $actor,
                         );
                     }
 
-                    $closingDate = $effective->subDay();
-                    $current->forceFill(['end_date' => $closingDate->toDateString()])->save();
+                    $this->assertEligible($newLeader, $effective, null);
+                    $this->assertNoOverlap($team, $effective, null);
+                    $this->assertEmployeeNoOverlap($newLeader, $effective, null);
+
+                    $leadership = TeamLeadership::query()->create([
+                        'team_id' => $team->getKey(),
+                        'employee_id' => $newLeader->getKey(),
+                        'start_date' => $effective->toDateString(),
+                        'end_date' => null,
+                    ]);
 
                     $this->audit->record(
-                        AuditAction::TeamLeaderClosed,
-                        $current,
+                        AuditAction::TeamLeaderReassigned,
+                        $leadership,
                         [
                             'team_id' => $team->getKey(),
-                            'employee_id' => $current->employee_id,
-                            'end_date' => $closingDate->toDateString(),
+                            'previous_employee_id' => $current?->employee_id,
+                            'employee_id' => $newLeader->getKey(),
+                            'effective_date' => $effective->toDateString(),
                         ],
-                        $reason ?? 'Clôture liée à une réaffectation.',
+                        $reason,
                         $actor,
                     );
-                }
 
-                $this->assertEligible($newLeader, $effective, null);
-                $this->assertNoOverlap($team, $effective, null);
-
-                $leadership = TeamLeadership::query()->create([
-                    'team_id' => $team->getKey(),
-                    'employee_id' => $newLeader->getKey(),
-                    'start_date' => $effective->toDateString(),
-                    'end_date' => null,
-                ]);
-
-                $this->audit->record(
-                    AuditAction::TeamLeaderReassigned,
-                    $leadership,
-                    [
-                        'team_id' => $team->getKey(),
-                        'previous_employee_id' => $current?->employee_id,
-                        'employee_id' => $newLeader->getKey(),
-                        'effective_date' => $effective->toDateString(),
-                    ],
-                    $reason,
-                    $actor,
-                );
-
-                return $leadership;
+                    return $leadership;
+                });
             });
         });
     }
@@ -194,42 +215,46 @@ class TeamLeadershipService
             throw new RuntimeException('La date de fin ne peut pas précéder la date de début.');
         }
 
-        return DB::transaction(function () use ($leadership, $end, $actor, $reason): TeamLeadership {
-            /** @var TeamLeadership $leadership */
-            $leadership = TeamLeadership::query()
-                ->whereKey($leadership->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+        return $this->teamLock->run($leadership->team_id, function () use ($leadership, $end, $actor, $reason): TeamLeadership {
+            return $this->lock->run($leadership->employee_id, function () use ($leadership, $end, $actor, $reason): TeamLeadership {
+                return DB::transaction(function () use ($leadership, $end, $actor, $reason): TeamLeadership {
+                    /** @var TeamLeadership $leadership */
+                    $leadership = TeamLeadership::query()
+                        ->whereKey($leadership->getKey())
+                        ->lockForUpdate()
+                        ->firstOrFail();
 
-            if ($leadership->cancelled_at !== null) {
-                throw new RuntimeException('Cette responsabilité a été annulée : elle ne peut pas être clôturée.');
-            }
+                    if ($leadership->cancelled_at !== null) {
+                        throw new RuntimeException('Cette responsabilité a été annulée : elle ne peut pas être clôturée.');
+                    }
 
-            if ($leadership->end_date !== null) {
-                throw new RuntimeException('Cette responsabilité est déjà clôturée.');
-            }
+                    if ($leadership->end_date !== null) {
+                        throw new RuntimeException('Cette responsabilité est déjà clôturée.');
+                    }
 
-            $this->periods->assertCovered(
-                $leadership->employee,
-                $leadership->start_date->toDateString(),
-                $end->toDateString(),
-            );
+                    $this->periods->assertCovered(
+                        $leadership->employee,
+                        $leadership->start_date->toDateString(),
+                        $end->toDateString(),
+                    );
 
-            $leadership->forceFill(['end_date' => $end->toDateString()])->save();
+                    $leadership->forceFill(['end_date' => $end->toDateString()])->save();
 
-            $this->audit->record(
-                AuditAction::TeamLeaderClosed,
-                $leadership,
-                [
-                    'team_id' => $leadership->team_id,
-                    'employee_id' => $leadership->employee_id,
-                    'end_date' => $end->toDateString(),
-                ],
-                $reason,
-                $actor,
-            );
+                    $this->audit->record(
+                        AuditAction::TeamLeaderClosed,
+                        $leadership,
+                        [
+                            'team_id' => $leadership->team_id,
+                            'employee_id' => $leadership->employee_id,
+                            'end_date' => $end->toDateString(),
+                        ],
+                        $reason,
+                        $actor,
+                    );
 
-            return $leadership;
+                    return $leadership;
+                });
+            });
         });
     }
 
@@ -252,35 +277,39 @@ class TeamLeadershipService
             );
         }
 
-        return DB::transaction(function () use ($leadership, $reason, $actor): TeamLeadership {
-            /** @var TeamLeadership $leadership */
-            $leadership = TeamLeadership::query()
-                ->whereKey($leadership->getKey())
-                ->lockForUpdate()
-                ->firstOrFail();
+        return $this->teamLock->run($leadership->team_id, function () use ($leadership, $reason, $actor): TeamLeadership {
+            return $this->lock->run($leadership->employee_id, function () use ($leadership, $reason, $actor): TeamLeadership {
+                return DB::transaction(function () use ($leadership, $reason, $actor): TeamLeadership {
+                    /** @var TeamLeadership $leadership */
+                    $leadership = TeamLeadership::query()
+                        ->whereKey($leadership->getKey())
+                        ->lockForUpdate()
+                        ->firstOrFail();
 
-            if ($leadership->cancelled_at !== null) {
-                throw new RuntimeException('Cette responsabilité a déjà été annulée.');
-            }
+                    if ($leadership->cancelled_at !== null) {
+                        throw new RuntimeException('Cette responsabilité a déjà été annulée.');
+                    }
 
-            $leadership->forceFill([
-                'cancelled_at' => now(),
-                'cancellation_reason' => $reason,
-            ])->save();
+                    $leadership->forceFill([
+                        'cancelled_at' => now(),
+                        'cancellation_reason' => $reason,
+                    ])->save();
 
-            $this->audit->record(
-                AuditAction::TeamLeaderCancelled,
-                $leadership,
-                [
-                    'team_id' => $leadership->team_id,
-                    'employee_id' => $leadership->employee_id,
-                    'start_date' => $leadership->start_date->toDateString(),
-                ],
-                $reason,
-                $actor,
-            );
+                    $this->audit->record(
+                        AuditAction::TeamLeaderCancelled,
+                        $leadership,
+                        [
+                            'team_id' => $leadership->team_id,
+                            'employee_id' => $leadership->employee_id,
+                            'start_date' => $leadership->start_date->toDateString(),
+                        ],
+                        $reason,
+                        $actor,
+                    );
 
-            return $leadership;
+                    return $leadership;
+                });
+            });
         });
     }
 
@@ -445,6 +474,30 @@ class TeamLeadershipService
             throw new RuntimeException(
                 'Cette équipe possède déjà un responsable principal sur cette période. '
                 .'Clôturez ou réaffectez la responsabilité existante.',
+            );
+        }
+    }
+
+    /**
+     * Un salarié ne peut exercer qu'une seule responsabilité principale à la
+     * fois, toutes équipes confondues. Les périodes disjointes ou adjacentes
+     * restent autorisées.
+     */
+    private function assertEmployeeNoOverlap(Employee $employee, CarbonImmutable $start, ?CarbonImmutable $end): void
+    {
+        $overlap = TeamLeadership::query()
+            ->where('employee_id', $employee->getKey())
+            ->whereNull('cancelled_at')
+            ->where('start_date', '<=', DatePeriod::endOrMax($end))
+            ->where(static function ($query) use ($start): void {
+                $query->whereNull('end_date')->orWhere('end_date', '>=', $start->toDateString());
+            })
+            ->exists();
+
+        if ($overlap) {
+            throw new RuntimeException(
+                'Ce salarié est déjà responsable principal d’une équipe sur cette période. '
+                .'Un salarié ne peut être responsable principal que d’une seule équipe à la fois.',
             );
         }
     }

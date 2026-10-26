@@ -140,14 +140,19 @@ seul salarié. Les périodes d'emploi sont inclusives, ne se chevauchent jamais
 et ne sont pas écrasées : une réembauche ajoute une nouvelle période. Une
 sortie est refusée tant qu'une affectation ou une responsabilité resterait
 active après la date de sortie ; l'utilisateur doit la clôturer ou l'annuler
-explicitement. Les affectations temporaires ne modifient jamais l'équipe
-principale. Un responsable principal doit être couvert par une période
-d'emploi, disposer d'un compte actif et avoir le rôle Chef d'équipe ou
-Conducteur de travaux.
+explicitement. La sortie peut proposer, via une option explicite et confirmée,
+la désactivation immédiate du compte applicatif lié ; sans cette option, le
+compte reste inchangé. Les affectations temporaires ne modifient jamais
+l'équipe principale. Un responsable principal doit être couvert par une
+période d'emploi, disposer d'un compte actif, avoir le rôle Chef d'équipe ou
+Conducteur de travaux et ne diriger qu'une seule équipe à la fois.
 
-Aucun élément RH ne peut être supprimé depuis l'interface. Les écritures
-sensibles sont sérialisées par un verrou MySQL ciblé par salarié ; le délai
-d'attente est configurable avec `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS`.
+Aucun élément RH ne peut être supprimé depuis l'interface. Les périodes
+d'emploi sont append-only au niveau du modèle ; aucune procédure de correction
+rétroactive n'est encore définie. Les écritures sensibles sont sérialisées par
+des verrous MySQL ciblés sur l'équipe puis sur les salariés concernés, dans un
+ordre déterministe ; le délai d'attente est configurable avec
+`PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS`.
 
 Le guide d'exploitation détaillé se trouve dans `docs/OPERATIONS.md`.
 

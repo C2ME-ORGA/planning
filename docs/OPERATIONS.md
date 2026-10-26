@@ -185,14 +185,24 @@ réauthentifier, 2FA comprise.
 
 - Champs RH non explicitement spécifiés (matricule, coordonnées, date de
   naissance, contrat, poste) : non créés.
-- Les périodes d'emploi sont append-only dans l'interface ; une correction
-  rétroactive n'est pas proposée. Une réembauche ajoute une période.
-- La sortie ne désactive pas automatiquement le compte applicatif : la
-  désactivation reste une opération distincte du lot 2, bloquée tant qu'une
-  responsabilité d'équipe reste active.
+- Les périodes d'emploi sont append-only dans l'interface et au niveau du
+  modèle : seules la clôture d'une période ouverte et l'ajout d'une nouvelle
+  période sont autorisés. Une réembauche ajoute une période.
+- **Procédure de correction rétroactive absente** : aucune décision ne définit
+  qui peut corriger, quels champs sont corrigeables, si la correction peut
+  traverser des périodes clôturées, ni comment revalider les affectations et
+  responsabilités dépendantes. Ne pas implémenter cette procédure sans
+  arbitrage. Décisions minimales à obtenir : acteur habilité, motif obligatoire,
+  champs et périodes concernés, conservation avant/après, effet sur les
+  affectations, responsabilités et audits.
+- La sortie propose une désactivation explicite du compte applicatif lié. Sans
+  confirmation, le compte reste actif. Avec confirmation, la désactivation est
+  immédiate et atomique avec la sortie et l'audit ; elle n'est acceptée que pour
+  une sortie effective aujourd'hui ou dans le passé.
 - Une affectation déjà commencée ne peut pas être annulée ; elle doit être
   clôturée à une date de fin. Une affectation future peut être annulée avec
   motif et reste conservée dans l'historique.
-- Le verrou salarié utilise `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS` (5 secondes
-  par défaut). Une attente dépassée refuse l'écriture, elle ne la valide pas.
+- Les verrous nommés utilisent `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS`
+  (5 secondes par défaut). L'ordre est équipe puis salariés triés par
+  identifiant. Une attente dépassée refuse l'écriture, elle ne la valide pas.
 - Le lot 3 attend la validation humaine avant toute suite.
