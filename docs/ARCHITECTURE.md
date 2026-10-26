@@ -1,0 +1,279 @@
+# Planning C2ME --- Architecture technique
+
+**Statut :** proposition d'architecture initiale à valider avant
+implémentation.\
+**Référence fonctionnelle :** `docs/SPECIFICATIONS.md`\
+**Instructions agent :** `AGENTS.md`
+
+## 1. Objectifs d'architecture
+
+L'architecture doit fournir une application indépendante pour la gestion
+du planning et des relevés d'heures de SARL C2ME, avec interface
+mobile/PWA, contrôle strict des autorisations, calculs testables et mode
+hors ligne limité.
+
+Principes : - monolithe modulaire Laravel pour le MVP ; - règles métier
+centralisées et testables ; - séparation entre planification, heures
+réelles, compteurs, RH, exports et signalements ; - cohérence
+transactionnelle des opérations critiques ; - sécurité côté serveur ; -
+synchronisation idempotente et résolution explicite des conflits ; - pas
+d'intégration BATISTACK dans le MVP.
+
+## 2. Socle technologique
+
+Socle envisagé, à vérifier contre le dépôt au démarrage : - PHP 8.4 ; -
+Laravel 13 ; - Filament 5 pour l'administration ; - Livewire 4 pour les
+interfaces interactives ; - MySQL ; - PWA mobile ; - Pest, Laravel Pint
+et GitHub Actions.
+
+Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
+examiner sa compatibilité et justifier le changement. Les versions
+effectives doivent être verrouillées dans `composer.lock` et
+documentées.
+
+## 3. Architecture applicative proposée
+
+Pour le MVP, privilégier un monolithe modulaire plutôt que des
+microservices. L'application et la base restent autonomes.
+
+### Couches recommandées
+
+-   **Interface** : ressources/pages Filament pour les opérations de
+    bureau ; interfaces Livewire adaptées au mobile pour les salariés et
+    responsables.
+-   **Autorisation** : policies/gates et règles d'accès réutilisables,
+    appliquées sur chaque action côté serveur.
+-   **Application** : actions ou services dédiés aux cas d'usage
+    (soumettre un relevé, contrôler, valider, clôturer un mois, générer
+    un export, synchroniser une saisie, traiter un signalement).
+-   **Domaine métier** : règles horaires, compteur, transitions de
+    workflow et invariants.
+-   **Persistance** : modèles Eloquent, migrations, contraintes, index
+    et transactions.
+-   **Infrastructure** : notifications, génération d'exports, tâches en
+    arrière-plan, stockage local côté client et synchronisation.
+-   **Qualité** : tests Pest, formatage Pint et CI.
+
+Cette séparation est une recommandation d'implémentation ; elle ne doit
+pas devenir une abstraction excessive. Suivre les conventions réelles du
+dépôt.
+
+## 4. Modules fonctionnels
+
+Modules logiques proposés : 1. Utilisateurs, authentification et rôles.
+2. Salariés et périodes d'emploi. 3. Équipes et historique des
+affectations. 4. Clients et chantiers. 5. Planning et affectations par
+demi-journée. 6. Relevés d'heures et workflow. 7. Absences. 8.
+Références mensuelles et compteur d'heures. 9. Indemnités et avances.
+10. Clôtures mensuelles/trimestrielles. 11. Exports RH et versionnement.
+12. Notifications. 13. Signalements. 14. Synchronisation PWA et
+conflits. 15. Journalisation et audit.
+
+Ces modules peuvent être des espaces de code au sein d'un seul projet
+Laravel. Le découpage en packages Composer séparés n'est pas requis pour
+le MVP.
+
+## 5. Modèle de données --- principes
+
+Le modèle relationnel exact doit être établi avant les migrations
+initiales. Il doit notamment permettre : - une fiche salarié persistante
+avec plusieurs périodes d'emploi ; - une équipe principale et des
+affectations datées ; - des chantiers archivables ; - des affectations
+de planning distinctes des heures réelles ; - des relevés et segments
+horaires ; - des transitions et historiques de validation ; - des
+événements d'absence distincts des segments ; - des références
+mensuelles historisées ; - un journal de mouvements du compteur ; - des
+lignes d'indemnités conservant les taux appliqués ; - des avances
+historisées ; - des clôtures de période ; - des exports versionnés ; -
+des transmissions hors ligne idempotentes et des conflits ; - des
+signalements, messages, changements de statut et liens de doublons.
+
+### Intégrité des données
+
+-   Utiliser des clés étrangères, contraintes d'unicité et index
+    pertinents.
+-   Utiliser des transactions pour les opérations qui modifient
+    plusieurs enregistrements liés.
+-   Conserver les mouvements financiers/heures historiques au lieu de
+    modifier leur passé silencieusement.
+-   Utiliser des timestamps explicites pour les opérations sensibles.
+-   Éviter de représenter des durées calculées comme des valeurs
+    manuellement éditables sans contrôle.
+-   Définir les états de workflow avec transitions autorisées
+    explicites.
+-   Les suppressions physiques de données métier ne doivent pas
+    contourner les règles de conservation.
+
+Le schéma précis, les noms de tables et les cardinalités doivent être
+conçus et testés avant implémentation ; ce document ne les invente pas.
+
+## 6. Calculs et temps
+
+-   Utiliser une précision à la minute et éviter les arrondis
+    intermédiaires.
+-   Stocker les instants et interpréter les périodes dans le fuseau
+    métier français, à confirmer techniquement dans la configuration.
+-   Gérer les segments qui traversent minuit et les semaines/mois qui se
+    chevauchent.
+-   Centraliser les formules de calcul dans des classes ou services
+    testables.
+-   Séparer calcul hebdomadaire des heures au-delà de 39 h et compteur
+    mensuel basé uniquement sur le travail effectif.
+-   Ne pas calculer de taux de majoration, de montant de paie ni de
+    retenue.
+-   Les ajustements de référence mensuelle doivent être historisés et ne
+    doivent pas recalculer silencieusement des périodes validées.
+
+Les tests doivent contenir des exemples chiffrés explicites pour les
+semaines de frontière, les segments traversant minuit, les minutes, les
+déficits et les changements de référence.
+
+## 7. Workflow et audit
+
+Les opérations de soumission, retour en correction, contrôle,
+validation, clôture et réouverture doivent passer par des actions métier
+explicites. Éviter les mises à jour arbitraires du statut depuis une
+interface.
+
+L'audit doit conserver au minimum, selon l'opération : acteur,
+date/heure, action, objet concerné, ancien/nouveau statut, motif requis
+et référence de la période. Ne pas stocker de secrets ou de détails
+personnels non nécessaires dans les journaux.
+
+Les opérations groupées du chef d'équipe doivent produire une trace
+distincte par relevé.
+
+## 8. PWA et synchronisation
+
+### 8.1 Séparation client/serveur
+
+Le serveur reste la source de vérité pour les données confirmées. Le
+client peut conserver des brouillons et une file de synchronisation
+locale. Les états d'interface doivent distinguer clairement les données
+locales et les données confirmées par le serveur.
+
+### 8.2 Transmission idempotente
+
+Chaque opération de synchronisation doit avoir un identifiant unique
+stable. Le serveur doit détecter une opération déjà traitée et renvoyer
+un résultat cohérent plutôt que créer un doublon.
+
+### 8.3 Conflits
+
+Les modifications locales et serveur doivent être comparées à l'aide
+d'identifiants et de versions de données. La stratégie exacte de
+versionnement et de résolution doit être spécifiée avant
+l'implémentation. Aucune stratégie « dernier enregistrement gagnant » ne
+doit écraser silencieusement une modification.
+
+### 8.4 Stockage local protégé
+
+Avant d'implémenter le stockage hors ligne, documenter : - les données
+qui doivent réellement être disponibles hors ligne ; - le mécanisme de
+chiffrement et la gestion des clés ; - l'isolation par compte ; - le
+comportement lors d'une déconnexion ; - la conservation des données non
+synchronisées ; - le comportement si le stockage est plein, indisponible
+ou corrompu.
+
+Le choix précis de technologie de stockage et de chiffrement doit être
+validé à la lumière des capacités des navigateurs ciblés. Ne pas
+prétendre qu'une PWA peut garantir un effacement sécurisé dans tous les
+navigateurs/appareils sans vérification.
+
+## 9. Notifications et tâches en arrière-plan
+
+Les notifications de planning, rappels de relevés et événements de
+signalement doivent utiliser un mécanisme cohérent et être testables.
+Les tâches planifiées ne doivent pas envoyer de rappels injustifiés en
+cas d'absence enregistrée ou de journée sans saisie attendue.
+
+La configuration du scheduler, des queues et des transports e-mail doit
+être documentée selon l'hébergement retenu. Ne pas supposer que les
+workers ou tâches planifiées sont déjà configurés.
+
+## 10. Exports
+
+Les exports doivent être générés depuis des données validées et
+autorisées. Le contrôle d'accès s'applique également aux
+téléchargements.
+
+Chaque export conserve période, date de génération, version et lien vers
+la version remplacée le cas échéant. Les anciennes versions restent
+disponibles selon les droits et la politique de conservation. Les
+formats Excel/PDF et leur contenu doivent être couverts par des tests.
+
+## 11. Sécurité
+
+-   Authentification et 2FA pour les rôles requis par la spécification.
+-   Protection des sessions et expiration après 15 minutes d'inactivité.
+-   Limitation de débit sur les endpoints sensibles.
+-   Validation côté serveur de toutes les entrées.
+-   Protection CSRF et paramètres de session sécurisés.
+-   Autorisation sur les téléchargements, actions Livewire, APIs et
+    tâches en arrière-plan.
+-   Secrets exclusivement dans la configuration de
+    déploiement/gestionnaire de secrets, jamais dans Git.
+-   Journaux sans mots de passe, tokens ou données RH superflues.
+-   Tests explicites des accès autorisés et refusés.
+-   Sauvegardes chiffrées et séparées de la production.
+
+## 12. Tests et intégration continue
+
+La suite de tests doit couvrir les calculs horaires, frontières de
+dates, permissions, transitions de workflow, clôtures, compteurs,
+historique des taux, exports/versionnement, signalements et
+synchronisation hors ligne.
+
+Objectif progressif de couverture globale : 70 %, puis 80 %. Ce
+pourcentage ne remplace pas les tests dédiés des fonctions critiques.
+
+La CI doit exécuter les commandes réellement configurées dans le dépôt.
+Les pull requests ne peuvent être fusionnées si les contrôles
+obligatoires échouent.
+
+## 13. Déploiement, sauvegardes et reprise
+
+Environnements distincts : développement, préproduction et production.
+Le déploiement de production est manuel après validation de
+préproduction.
+
+Sauvegardes serveur toutes les six heures, chiffrées et séparées de la
+production. Conservation retenue : 7 jours de sauvegardes quotidiennes
+et 4 sauvegardes hebdomadaires supplémentaires. La rotation doit
+préserver ces sauvegardes hebdomadaires. La restauration doit être
+testée périodiquement.
+
+Les objectifs de reprise, la fréquence précise des tests, la
+supervision, l'hébergement, les migrations et la procédure de retour
+arrière restent à définir.
+
+## 14. Points ouverts à résoudre avant production
+
+1.  Confirmer les règles sociales et d'indemnités avec le gestionnaire
+    de paie.
+2.  Définir les durées de conservation légales et opérationnelles.
+3.  Choisir et valider le stockage/chiffrement local et la gestion des
+    clés.
+4.  Définir la stratégie détaillée de résolution des conflits.
+5.  Définir RPO/RTO, fréquence des tests de restauration et rotation
+    exacte.
+6.  Fixer l'hébergement, le domaine, la supervision et les paramètres de
+    déploiement.
+7.  Vérifier compatibilité navigateurs/appareils et comportement en cas
+    de stockage local saturé.
+8.  Finaliser les transitions exactes des workflows et les cas de
+    réouverture.
+9.  Vérifier les versions réellement disponibles et compatibles des
+    dépendances avant l'installation.
+
+## 15. Critères de fin de tâche
+
+Une tâche est terminée lorsque la fonctionnalité correspond à la
+spécification, que les permissions et validations sont imposées côté
+serveur, que les tests pertinents sont ajoutés et exécutés, que le diff
+est relu, que la documentation est à jour et que les vérifications non
+réalisées sont explicitement signalées.
+
+Ne jamais affirmer qu'un test a réussi, qu'un fichier existe, qu'une
+migration a été exécutée ou qu'un déploiement a abouti sans
+vérification.
