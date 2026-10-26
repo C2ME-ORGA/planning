@@ -69,9 +69,28 @@ class EmployeeLifecycleService
                     throw new EmployeeExitBlockedException($blockers);
                 }
 
-                EmploymentPeriod::authorizeClosure(function () use ($period, $exit): void {
-                    $period->forceFill(['end_date' => $exit->toDateString()])->save();
-                });
+                // Écriture Query Builder assumée et localisée ici : le modèle
+                // EmploymentPeriod refuse toute mise à jour Eloquent (append-only
+                // strict). La clôture n'est légitime qu'à cet endroit, après
+                // permission, verrou salarié, relecture, contrôle des
+                // affectations/responsabilités et sous transaction. La condition
+                // whereNull('end_date') protège contre une clôture concurrente :
+                // 0 ligne affectée = 0 modification = exception et rollback.
+                $affected = DB::table('employment_periods')
+                    ->where('id', $period->getKey())
+                    ->whereNull('end_date')
+                    ->update([
+                        'end_date' => $exit->toDateString(),
+                        'updated_at' => now(),
+                    ]);
+
+                if ($affected !== 1) {
+                    throw new RuntimeException(
+                        'La période d’emploi a déjà été clôturée par une autre opération. Aucun changement n’est enregistré.',
+                    );
+                }
+
+                $period->refresh();
 
                 $accountLinked = $employee->user_id !== null;
                 $accountDeactivated = false;

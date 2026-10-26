@@ -25,51 +25,27 @@ use LogicException;
 #[Fillable(['start_date', 'end_date'])]
 class EmploymentPeriod extends Model
 {
-    private static bool $closureAuthorized = false;
-
     /** @use HasFactory<EmploymentPeriodFactory> */
     use HasFactory;
 
     /**
-     * L'historique est append-only. La seule mutation autorisée est la clôture
-     * d'une période encore ouverte (via la sortie contrôlée). Toute autre
-     * modification et toute suppression sont refusées au niveau du modèle.
+     * L'historique est strictement append-only : toute mise à jour Eloquent
+     * directe et toute suppression sont refusées, sans exception ni autorisation
+     * temporaire. La clôture légitime (sortie contrôlée) est écrite par
+     * EmployeeLifecycleService via une écriture ciblée, sous verrou, sous
+     * transaction et auditée.
      */
     protected static function booted(): void
     {
-        static::updating(function (EmploymentPeriod $period): void {
-            if (! self::$closureAuthorized) {
-                throw new LogicException(
-                    'Une période d’emploi est historique : utilisez la procédure métier de clôture.',
-                );
-            }
-
-            $dirty = array_values(array_diff(array_keys($period->getDirty()), ['updated_at']));
-
-            if ($period->getOriginal('end_date') !== null
-                || $dirty !== ['end_date']
-                || $period->end_date === null
-                || $period->end_date->lt($period->start_date)) {
-                throw new LogicException(
-                    'La clôture de la période d’emploi est invalide.',
-                );
-            }
+        static::updating(function (): void {
+            throw new LogicException(
+                'Une période d’emploi est historique : utilisez la procédure métier de sortie.',
+            );
         });
 
         static::deleting(function (): void {
             throw new LogicException('Une période d’emploi ne peut pas être supprimée.');
         });
-    }
-
-    public static function authorizeClosure(\Closure $callback): mixed
-    {
-        self::$closureAuthorized = true;
-
-        try {
-            return $callback();
-        } finally {
-            self::$closureAuthorized = false;
-        }
     }
 
     /**

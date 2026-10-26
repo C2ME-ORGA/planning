@@ -87,11 +87,17 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     inventés dans ce lot.
 -   **Périodes d'emploi** : `employment_periods` (`employee_id`, `start_date`,
     `end_date` nullable), dates inclusives, contrainte SQL de cohérence et
-    index. Les périodes sont append-only ; une réembauche crée une nouvelle
-    période. Le modèle `EmploymentPeriod` refuse toute mise à jour autre que la
-    clôture d'une période ouverte, ainsi que toute suppression. L'absence de
-    chevauchement est vérifiée par `EmploymentPeriodService` dans une
-    transaction protégée par un verrou MySQL nommé (`EmployeeMutationLock`).
+    index. Les périodes sont strictement append-only ; une réembauche crée une
+    nouvelle période. Le modèle `EmploymentPeriod` refuse toute mise à jour
+    Eloquent directe et toute suppression, sans API d'autorisation temporaire.
+    La clôture légitime est écrite uniquement dans
+    `EmployeeLifecycleService::exit()`, par une écriture Query Builder ciblée
+    (`whereNull('end_date')`) après permission, verrou salarié, relecture et
+    contrôle des affectations/responsabilités, sous transaction ; le résultat
+    `$affected !== 1` provoque une exception et le rollback complet (écriture
+    SQL directe hors application possible, non couverte par les modèles).
+    L'absence de chevauchement est vérifiée par `EmploymentPeriodService` dans
+    une transaction protégée par un verrou MySQL nommé (`EmployeeMutationLock`).
     MySQL ne fournit pas d'exclusion de plages : la contrainte SQL seule ne
     suffit pas. Aucune procédure de correction rétroactive n'est implémentée
     faute de règles métier ; voir `docs/OPERATIONS.md`.

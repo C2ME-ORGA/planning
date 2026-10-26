@@ -16,6 +16,8 @@ use App\Services\Employees\EmployeeService;
 use App\Services\Employees\EmploymentPeriodService;
 use App\Services\Employees\TeamAssignmentService;
 use App\Services\Employees\TeamLeadershipService;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 it('blocks an exit while assignments or responsibilities remain active after the exit date', function () {
@@ -284,7 +286,17 @@ it('rolls back the exit when the account deactivation fails', function () {
     ]);
     app(EmployeeService::class)->linkAccount($employee, $actor, $actor);
 
+    DB::table('sessions')->insert([
+        'id' => 'exit-deactivation-failure-session',
+        'user_id' => $actor->id,
+        'ip_address' => '127.0.0.1',
+        'user_agent' => 'Test',
+        'payload' => '',
+        'last_activity' => now()->getTimestamp(),
+    ]);
+
     $periodBefore = $employee->fresh()->employmentPeriods()->firstOrFail();
+    $rememberToken = $actor->remember_token;
 
     expect(fn () => app(EmployeeLifecycleService::class)->exit(
         $employee,
@@ -294,8 +306,10 @@ it('rolls back the exit when the account deactivation fails', function () {
     ))->toThrow(RuntimeException::class, 'désactiver');
 
     expect($periodBefore->fresh()->end_date)->toBeNull()
-        ->and($actor->fresh()->isActive())->toBeTrue();
+        ->and($actor->fresh()->isActive())->toBeTrue()
+        ->and($actor->fresh()->remember_token)->toBe($rememberToken);
 
+    $this->assertDatabaseHas('sessions', ['id' => 'exit-deactivation-failure-session']);
     $this->assertDatabaseMissing('audit_events', [
         'action' => AuditAction::EmployeeExited->value,
         'subject_id' => (string) $employee->id,
@@ -325,6 +339,215 @@ it('refuses immediate account deactivation for a future exit', function () {
 
     expect($user->fresh()->isActive())->toBeTrue()
         ->and($employee->fresh()->employmentPeriods()->first()->end_date)->toBeNull();
+});
+
+it('closes the employment period only once and records a single exit event', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $employee = Employee::factory()->create();
+    EmploymentPeriod::factory()->for($employee)->create([
+        'start_date' => now()->subYear()->toDateString(),
+        'end_date' => null,
+    ]);
+
+    app(EmployeeLifecycleService::class)->exit($employee, now()->toDateString(), $actor);
+
+    expect(fn () => app(EmployeeLifecycleService::class)->exit($employee, now()->toDateString(), $actor))
+        ->toThrow(RuntimeException::class, 'aucune période');
+
+    expect($employee->fresh()->employmentPeriods()->count())->toBe(1)
+        ->and($employee->fresh()->employmentPeriods()->first()->end_date->toDateString())
+        ->toBe(now()->toDateString())
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::EmployeeExited->value)
+            ->where('subject_id', (string) $employee->id)
+            ->count())->toBe(1);
+});
+
+it('refuses an invalid or too early exit date', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $employee = Employee::factory()->create();
+    EmploymentPeriod::factory()->for($employee)->create([
+        'start_date' => '2026-06-01',
+        'end_date' => null,
+    ]);
+
+    expect(fn () => app(EmployeeLifecycleService::class)->exit($employee, 'pas-une-date', $actor))
+        ->toThrow(RuntimeException::class, 'AAAA-MM-JJ');
+
+    expect(fn () => app(EmployeeLifecycleService::class)->exit($employee, '2026-05-31', $actor))
+        ->toThrow(RuntimeException::class, 'ne peut pas précéder');
+
+    expect($employee->fresh()->employmentPeriods()->first()->end_date)->toBeNull();
+});
+
+it('rolls back the closure when the audit write fails', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $employee = Employee::factory()->create();
+    EmploymentPeriod::factory()->for($employee)->create([
+        'start_date' => now()->subYear()->toDateString(),
+        'end_date' => null,
+    ]);
+    $periodId = $employee->employmentPeriods()->firstOrFail()->getKey();
+
+    config(['planning.audit.key' => 'trop-court']);
+
+    expect(fn () => app(EmployeeLifecycleService::class)->exit($employee, now()->toDateString(), $actor))
+        ->toThrow(RuntimeException::class, 'PLANNING_AUDIT_KEY');
+
+    expect(EmploymentPeriod::query()->findOrFail($periodId)->end_date)->toBeNull();
+
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::EmployeeExited->value,
+        'subject_id' => (string) $employee->id,
+    ]);
+});
+
+it('rolls back closure, account and sessions when the audit fails after deactivation', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $employee = Employee::factory()->create();
+    EmploymentPeriod::factory()->for($employee)->create([
+        'start_date' => now()->subYear()->toDateString(),
+        'end_date' => null,
+    ]);
+    $user = User::factory()->ouvrier()->create();
+    app(EmployeeService::class)->linkAccount($employee, $user, $actor);
+
+    DB::table('sessions')->insert([
+        'id' => 'exit-audit-failure-session',
+        'user_id' => $user->id,
+        'ip_address' => '127.0.0.1',
+        'user_agent' => 'Test',
+        'payload' => '',
+        'last_activity' => now()->getTimestamp(),
+    ]);
+
+    $rememberToken = $user->remember_token;
+    $periodId = $employee->employmentPeriods()->firstOrFail()->getKey();
+
+    config(['planning.audit.key' => 'trop-court']);
+
+    expect(fn () => app(EmployeeLifecycleService::class)->exit($employee, now()->toDateString(), $actor, true))
+        ->toThrow(RuntimeException::class, 'PLANNING_AUDIT_KEY');
+
+    expect(EmploymentPeriod::query()->findOrFail($periodId)->end_date)->toBeNull()
+        ->and($user->fresh()->isActive())->toBeTrue()
+        ->and($user->fresh()->deactivated_at)->toBeNull()
+        ->and($user->fresh()->remember_token)->toBe($rememberToken);
+
+    $this->assertDatabaseHas('sessions', ['id' => 'exit-audit-failure-session']);
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::AccountDeactivated->value,
+        'subject_id' => (string) $user->id,
+    ]);
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::EmployeeExited->value,
+        'subject_id' => (string) $employee->id,
+    ]);
+});
+
+it('fails when the period is closed between the service re-read and the guarded update', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $employee = Employee::factory()->create();
+    EmploymentPeriod::factory()->for($employee)->create([
+        'start_date' => now()->subYear()->toDateString(),
+        'end_date' => null,
+    ]);
+    $periodId = $employee->employmentPeriods()->firstOrFail()->getKey();
+
+    // Injection déterministe d'un interlacement SQL : la relecture exacte du
+    // service (EmploymentPeriodService::openPeriod) est identifiée par sa
+    // signature SQL — table employment_periods, condition employee_id,
+    // end_date IS NULL et tri start_date DESC — et non par un simple motif
+    // « première requête contenant employment_periods ». Une autre requête
+    // sur la même table ne peut donc pas déclencher l'injection ; si la
+    // signature de relecture change, le test échoue explicitement
+    // ($injected restant faux) au lieu de viser la mauvaise requête.
+    //
+    // L'ordre est ensuite prouvé par la séquence observée : l'UPDATE d'injection
+    // doit précéder l'UPDATE métier protégé du service. L'UPDATE d'injection
+    // génère lui-même un événement QueryExecuted réentrant : $injecting
+    // l'identifie et l'ignore pour ne jamais le confondre avec l'UPDATE métier.
+    $injected = false;
+    $injecting = false;
+    $matchedSql = null;
+    $injectedAffected = null;
+    $observed = [];
+
+    DB::listen(function (QueryExecuted $query) use (&$injected, &$injecting, &$matchedSql, &$injectedAffected, &$observed, $periodId): void {
+        if ($injecting) {
+            return;
+        }
+
+        $sql = strtolower(str_replace(['`', '"', '[', ']'], '', trim($query->sql)));
+
+        if (str_starts_with($sql, 'update') && str_contains($sql, 'employment_periods')) {
+            // Hors injection en cours, seul l'UPDATE métier du service peut
+            // écrire sur la table à ce stade ; toute autre écriture avant
+            // l'injection signale un ordre de requêtes inattendu.
+            $observed[] = $injected ? 'business-update' : 'update-before-injection';
+
+            return;
+        }
+
+        if ($injected
+            || ! str_starts_with($sql, 'select')
+            || ! str_contains($sql, 'from employment_periods')
+            || ! str_contains($sql, 'employee_id')
+            || ! str_contains($sql, 'end_date is null')
+            || ! str_contains($sql, 'order by start_date desc')) {
+            return;
+        }
+
+        $injected = true;
+        $matchedSql = $query->sql;
+        $injecting = true;
+
+        try {
+            $injectedAffected = DB::table('employment_periods')
+                ->where('id', $periodId)
+                ->whereNull('end_date')
+                ->update([
+                    'end_date' => now()->toDateString(),
+                    'updated_at' => now(),
+                ]);
+        } finally {
+            $injecting = false;
+        }
+
+        $observed[] = 'injected-update';
+    });
+
+    $caught = null;
+
+    try {
+        app(EmployeeLifecycleService::class)->exit($employee, now()->toDateString(), $actor);
+    } catch (RuntimeException $exception) {
+        $caught = $exception;
+    }
+
+    // L'exception provient bien de la branche `if ($affected !== 1)` :
+    // message propre à cette branche et jamais une erreur SQL de la couche
+    // Query Builder (QueryException est aussi un RuntimeException).
+    expect($caught)->not->toBeNull()
+        ->and($caught)->not->toBeInstanceOf(QueryException::class)
+        ->and($caught?->getMessage())->toContain('déjà été clôturée par une autre opération');
+
+    // L'UPDATE d'injection a bien affecté exactement une ligne, puis a été
+    // suivi de l'UPDATE métier protégé — dans cet ordre.
+    expect($injected)->toBeTrue()
+        ->and((string) $matchedSql)->toContain('employment_periods')
+        ->and((string) $matchedSql)->toContain('is null')
+        ->and($injectedAffected)->toBe(1)
+        ->and($observed)->toBe(['injected-update', 'business-update']);
+
+    // Rollback complet : la transaction a restauré la période et aucun événement
+    // EmployeeExited n'a été enregistré.
+    expect(EmploymentPeriod::query()->findOrFail($periodId)->end_date)->toBeNull();
+
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::EmployeeExited->value,
+        'subject_id' => (string) $employee->id,
+    ]);
 });
 
 it('refuses exit operations to unauthorized roles', function (Role $role) {

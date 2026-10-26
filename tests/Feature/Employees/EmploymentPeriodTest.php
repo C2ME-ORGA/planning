@@ -119,6 +119,11 @@ it('refuses a direct model closure before the employment start date', function (
     expect($period->fresh()->end_date)->toBeNull();
 });
 
+it('no longer exposes the former closure authorization API', function () {
+    expect(method_exists(EmploymentPeriod::class, 'authorizeClosure'))->toBeFalse()
+        ->and(property_exists(EmploymentPeriod::class, 'closureAuthorized'))->toBeFalse();
+});
+
 it('refuses period operations to unauthorized roles', function (Role $role) {
     $employee = Employee::factory()->create();
     $actor = User::factory()->role($role)->create();
