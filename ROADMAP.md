@@ -29,10 +29,11 @@ Le dépôt contient une application Laravel 13.38 avec Livewire 4.4, Filament 5.
 **Point d’arrêt humain :** valider le socle avant les fonctionnalités métier.
 
 ## Lot 2 — Authentification, rôles et permissions
-**Travaux :** rôles Administrateur, Bureau/Direction, Conducteur de travaux, Chef d’équipe, Ouvrier ; policies/gates serveur ; 2FA obligatoire pour Administrateur et Bureau/Direction ; activation par lien sécurisé, réinitialisation, session de 15 minutes, désactivation immédiate, journal d’audit.  
-**Tests :** accès autorisés/refusés par rôle, accès direct interdit, expiration et usage unique des liens, 2FA, révocation de session et absence de secrets dans les logs.  
-**Acceptation :** matrice d’accès testée.  
-**Point d’arrêt humain :** valider les permissions avant les modules métier.
+**Statut :** validation fonctionnelle acquise le 26/10/2026 ; clôture définitive en attente de confirmation humaine. Le point bloquant de la clé d’audit dédiée est traité : `PLANNING_AUDIT_KEY` distincte d’`APP_KEY`, identifiant de clé par événement, vérification des événements historiques et rotation documentée. Tests, Pint et Larastan passent localement ; aucune mise en production n'a été effectuée.
+**Travaux :** rôles Administrateur, Bureau/Direction, Conducteur de travaux, Chef d'équipe, Ouvrier ; policies/gates serveur ; 2FA obligatoire pour Administrateur et Bureau/Direction ; activation par lien sécurisé, réinitialisation, session de 15 minutes, désactivation immédiate, journal d'audit.
+**Tests :** accès autorisés/refusés par rôle, accès direct interdit, expiration et usage unique des liens, 2FA, révocation de session et absence de secrets dans les logs.
+**Acceptation :** matrice d'accès testée.
+**Point d'arrêt humain :** valider les permissions avant les modules métier.
 
 ## Lot 3 — Salariés, périodes d’emploi et équipes
 **Travaux :** fiche salarié, périodes d’emploi multiples, équipes principales, responsables, affectations temporaires datées, sorties/retours et historique.  

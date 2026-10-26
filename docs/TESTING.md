@@ -31,3 +31,23 @@ Les tests automatisés utilisent une base MySQL dédiée et jetable, `planning_c
 - Les vérifications obligatoires doivent échouer la PR en cas d’échec.
 - Documenter commandes et résultats réels ; ne jamais simuler un résultat.
 - Tester les migrations sur base de test et valider la restauration en environnement isolé.
+
+## Couverture du lot 2 (26/10/2026)
+
+- `tests/Feature/Access/RolePermissionMatrixTest.php` : matrice des rôles,
+  refus par défaut, absence d’auto-approbation, portée des exceptions.
+- `tests/Feature/Access/PanelAccessTest.php` : panneau, 2FA, rôles autorisés,
+  déconnexion d’un compte désactivé, lecture seule de l’audit.
+- `tests/Feature/Access/AccountLifecycleTest.php` : amorçage CLI, activation à
+  usage unique et expirée, changement de rôle, désactivation, révocation de
+  session, protection du dernier Bureau.
+- `tests/Feature/Audit/AuditLogTest.php` : chaîne, séquence, clé d’audit dédiée,
+  rotation de clé, événements historiques `APP_KEY`, expurgation, détection
+  d’une signature invalide et commande de vérification.
+
+Les triggers MySQL d’audit ne sont pas supprimés dans les tests (le DDL MySQL
+valide implicitement les transactions). La détection de falsification est donc
+testée en insérant directement un événement dont la signature est invalide.
+
+Résultats de référence du lot 2 : 45 tests, 304 assertions, Pint et Larastan
+verts.

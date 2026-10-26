@@ -26,9 +26,55 @@ pour l'administration ; - Livewire 4 pour les interfaces interactives ; -
 MySQL 8 pour tous les environnements, tests automatisés inclus ; - PWA
 mobile (à implémenter) ; - Pest, Laravel Pint, Larastan et GitHub Actions.
 
-Le panneau Filament est restreint par une liste d'adresses autorisées tant
-que le modèle de rôles n'est pas implémenté. Cette restriction ne remplace
-pas les policies et la double authentification prévues au lot 2.
+Le panneau Filament est restreint par le rôle du compte (Administrateur ou
+Bureau/Direction) et protégé par une 2FA TOTP obligatoire. Les policies,
+gates et le journal d'audit chaîné sont décrits à la section 3.1.
+
+### 3.1 Modèle d'accès et audit (lot 2)
+
+-   **Rôles** : `administrateur`, `bureau_direction`, `conducteur_travaux`,
+    `chef_equipe`, `ouvrier` ; un seul rôle par compte. Les rôles sont des
+    enums et la matrice de permissions est centralisée dans
+    `app/Enums/Permission.php`.
+-   **Autorisation** : gates et policies serveur (`app/Providers/AccessServiceProvider.php`,
+    `app/Policies/`). L'interface Filament ne fait que refléter ces règles.
+    L'Administrateur ne possède que `audit.view`.
+-   **Panneau** : `User::canAccessPanel()` n'autorise que l'Administrateur et
+    le Bureau/Direction ; la 2FA est exigée par le panneau. Le middleware
+    `EnsureAccountIsActive` est prioritaire sur l'authentification Filament
+    afin qu'un compte désactivé soit déconnecté (et non renvoyé en 403).
+-   **Comptes** : création par Bureau/Direction (`AccountProvisioner`), lien
+    d'activation à usage unique (`AccountActivation`, contrôleur dédié),
+    désactivation avec révocation des sessions (`SessionRevoker`), réinitialisation
+    de la 2FA en CLI. Aucune suppression physique.
+-   **Amorçage** : `planning:bootstrap-bureau` crée le premier Bureau/Direction,
+    refuse si un tel compte existe déjà, puis se ferme. Aucune élévation de
+    privilège par la CLI : chaque commande sensible exige `--actor` avec la
+    permission requise, un motif et `--confirm`.
+-   **Exceptions** : `PermissionException` ciblée, motivée, révocable, ≤ 12 mois,
+    limitée à trois permissions opérationnelles. Service
+    `PermissionExceptionService`, gestion en CLI uniquement.
+-   **Audit** : table `audit_events` append-only, séquence contiguë, chaîne
+    HMAC-SHA256 signée par une clé dédiée (`PLANNING_AUDIT_KEY`) distincte
+    d'`APP_KEY`, triggers MySQL anti-`UPDATE`/`DELETE`, expurgation des clés
+    sensibles et commande `planning:audit:verify`. Chaque événement stocke
+    l'identifiant de sa clé ; les événements historiques signés avec `APP_KEY`
+    restent vérifiables et les anciennes clés d'audit peuvent être déclarées
+    dans `PLANNING_AUDIT_PREVIOUS_KEYS`.
+    Les lots ultérieurs ne doivent jamais écrire de contenu médical ni de motif
+    d'absence détaillé dans le champ libre `reason` ou `context` : les clés
+    sensibles sont expurgées, mais un texte libre ne peut pas être filtré de
+    façon fiable.
+    Limite : un acteur disposant de la clé d'audit et d'un accès écriture SQL
+    direct peut recalculer la chaîne ; la séparation des accès et la supervision
+    restent nécessaires. La rotation d'`APP_KEY` rend non vérifiables les
+    événements historiques qui en dépendent.
+-   **Auto-validation** : `ApprovalRules` interdit à un conducteur/chef
+    d'approuver sa propre proposition ; l'auto-validation Bureau/Direction
+    exige un motif et produit un événement d'audit dédié.
+-   **Configuration** : `config/planning.php` (durée d'activation, durée max
+    des exceptions, clé et identifiant d'audit), `config/session.php`
+    (15 minutes).
 
 Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
 examiner sa compatibilité et justifier le changement. Les versions

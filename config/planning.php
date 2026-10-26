@@ -1,21 +1,55 @@
 <?php
 
+$previousAuditKeys = json_decode((string) env('PLANNING_AUDIT_PREVIOUS_KEYS', '{}'), true);
+
 return [
 
     /*
     |--------------------------------------------------------------------------
-    | Administrateurs temporaires du panneau Filament
+    | Comptes
     |--------------------------------------------------------------------------
     |
-    | Cette liste permet de n'ouvrir le panneau d'administration qu'à des
-    | adresses explicitement autorisées, en attendant le modèle de rôles
-    | prévu au lot 2. Laisser la variable vide interdit l'accès à tous.
+    | Durée de validité d'un lien d'activation. Valeur par défaut à confirmer
+    | lors de la validation humaine du lot 2 (elle n'est pas fixée par la
+    | spécification).
     |
     */
 
-    'admin_emails' => array_values(array_filter(array_map(
-        static fn (string $email): string => strtolower(trim($email)),
-        explode(',', (string) env('PLANNING_ADMIN_EMAILS', '')),
-    ))),
+    'accounts' => [
+        'activation_ttl_minutes' => (int) env('PLANNING_ACTIVATION_TTL_MINUTES', 1440),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Exceptions de permission
+    |--------------------------------------------------------------------------
+    |
+    | Une exception est révocable et ne peut jamais dépasser douze mois, afin
+    | qu'une revue annuelle soit systématiquement possible.
+    |
+    */
+
+    'exceptions' => [
+        'max_duration_months' => (int) env('PLANNING_EXCEPTION_MAX_MONTHS', 12),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Intégrité du journal d'audit
+    |--------------------------------------------------------------------------
+    |
+    | La clé d'audit doit être distincte d'APP_KEY et comporter au moins
+    | 32 caractères. `previous_keys` est un objet JSON {identifiant: clé}
+    | utilisé uniquement pour vérifier les événements signés avant une
+    | rotation de clé. Exemple :
+    | PLANNING_AUDIT_PREVIOUS_KEYS='{"audit-v0":"..."}'
+    |
+    */
+
+    'audit' => [
+        'key_id' => (string) env('PLANNING_AUDIT_KEY_ID', 'audit-v1'),
+        'key' => (string) env('PLANNING_AUDIT_KEY', ''),
+        'previous_keys' => is_array($previousAuditKeys) ? $previousAuditKeys : [],
+    ],
 
 ];
