@@ -137,11 +137,10 @@ develop -> Pull Request -> master -> Pull Request -> production
 - Ne pas fusionner une pull request dont un contrôle obligatoire échoue.
 - Ne pas déployer automatiquement en production.
 
-Les branches `master` et `production` sont protégées sur GitHub : pull request
-obligatoire, contrôle `ci` requis, force-push et suppression interdits.
-`production` applique également ces règles aux administrateurs. Un ruleset
-préconfigure la même protection pour `develop`, qui s'appliquera dès la
-publication de la branche.
+Les branches `develop`, `master` et `production` sont protégées sur GitHub :
+pull request obligatoire, contrôle `ci` requis, force-push et suppression
+interdits. `production` applique également ces règles aux administrateurs. La
+branche `develop` est publiée et son premier run CI est vert.
 
 La CI ne déploie rien : elle exécute uniquement les contrôles de qualité.
 - Aucune fonctionnalité métier ne doit être ajoutée avant validation de la
