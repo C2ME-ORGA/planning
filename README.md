@@ -60,25 +60,71 @@ Adapter `APP_URL` si un autre nom d'hôte est utilisé.
 
 ## Panneau d'administration
 
-Le panneau Filament est disponible sur `/admin`.
+Le panneau Filament est disponible sur `/admin`. L'accès dépend exclusivement du
+rôle du compte, contrôlé côté serveur (`canAccessPanel()`), et non plus d'une
+liste d'adresses. Seuls les rôles **Administrateur** et **Bureau/Direction**
+ouvrent le panneau ; les autres rôles n'ont aucun accès à l'interface
+d'administration.
 
-L'accès est volontairement restreint à une liste d'adresses explicitement
-autorisées par `PLANNING_ADMIN_EMAILS`, séparées par des virgules :
+La double authentification TOTP (avec codes de récupération) est obligatoire
+pour tous les comptes du panneau. Un compte sans second facteur est redirigé
+vers la configuration avant d'atteindre une page.
 
-```dotenv
-PLANNING_ADMIN_EMAILS=administrateur@example.test
-```
+### Premier compte Bureau / Direction
 
-Créer un utilisateur local avec :
+Aucune inscription libre n'existe. Le tout premier compte se crée uniquement en
+ligne de commande, sur un serveur maîtrisé, puis le lien d'activation est
+transmis par un canal sûr :
 
 ```bash
-php artisan make:filament-user
+php artisan planning:bootstrap-bureau direction@example.test \
+    --name="Direction C2ME" \
+    --confirm
 ```
 
-Puis ajouter son adresse à `PLANNING_ADMIN_EMAILS`. Une liste vide interdit
-l'accès à tous. Ce mécanisme est temporaire : le modèle de rôles, la double
-authentification et les policies seront implémentés au lot 2. Aucun panneau ne
-doit être ouvert sans contrôle d'accès explicite.
+La commande refuse de s'exécuter si un compte Bureau/Direction existe déjà ou
+si l'adresse est déjà utilisée. Elle crée un compte sans mot de passe utilisable
+(mot de passe aléatoire jamais communiqué), envoie un lien d'activation à usage
+unique et journalise l'opération avec un acteur système. Les comptes suivants
+sont créés par le Bureau/Direction depuis `/admin/users` ; l'Administrateur
+technique ne peut ni créer de compte ni s'attribuer le rôle Bureau/Direction.
+
+Variables utiles :
+
+```dotenv
+# Durée du lien d'activation (minutes). Valeur par défaut à valider.
+PLANNING_ACTIVATION_TTL_MINUTES=1440
+# Durée maximale d'une exception de permission (mois).
+PLANNING_EXCEPTION_MAX_MONTHS=12
+# Clé dédiée au journal d'audit, distincte d'APP_KEY (32 caractères minimum).
+PLANNING_AUDIT_KEY_ID=audit-v1
+PLANNING_AUDIT_KEY=
+```
+
+La clé d'audit se génère avec `php artisan key:generate --show`, puis se stocke
+dans le gestionnaire de secrets. `planning:audit:verify` refuse une clé absente,
+trop courte ou identique à `APP_KEY`.
+
+### Exploitation
+
+```bash
+# Vérifier l'intégrité de la chaîne d'audit
+php artisan planning:audit:verify
+
+# Révoquer toutes les sessions (urgence, n'accorde aucun droit)
+php artisan planning:emergency-lockdown --confirm
+
+# Réinitialiser la 2FA d'un compte après perte d'accès
+php artisan planning:mfa:reset agent@example.test \
+    --actor=direction@example.test --reason="Perte de téléphone" --confirm
+```
+
+Les exceptions de permission sont accordées et révoquées uniquement en ligne de
+commande, avec acteur Bureau/Direction, motif d'au moins 10 caractères et
+échéance. Une exception ne peut jamais porter sur la gestion des comptes, de
+l'audit, des absences, ni sur la validation, la correction ou la réouverture.
+
+Le guide d'exploitation détaillé se trouve dans `docs/OPERATIONS.md`.
 
 ## Tests
 
