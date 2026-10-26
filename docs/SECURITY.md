@@ -4,6 +4,7 @@
 - Modèle de rôles fonctionnels : Administrateur, Bureau/Direction, Conducteur de travaux, Chef d’équipe, Ouvrier.
 - Appliquer policies/gates sur toutes les opérations côté serveur.
 - 2FA obligatoire pour Administrateur et Bureau/Direction.
+- Panneau Filament restreint par une liste d’adresses autorisées tant que le modèle de rôles n’est pas implémenté ; ne jamais l’ouvrir à tous les comptes.
 - Création de compte par Bureau/Direction uniquement ; pas d’inscription libre.
 - Activation et réinitialisation via liens sécurisés à usage unique et durée limitée.
 - Session expirant après 15 minutes d’inactivité.

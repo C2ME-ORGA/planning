@@ -5,7 +5,7 @@
 **Références :** `AGENTS.md`, `docs/SPECIFICATIONS.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/TESTING.md`.
 
 ## État actuel constaté
-Le dépôt contient déjà une application Laravel 13 avec Livewire 4, Pest, Pint, Larastan et un pipeline de qualité à confirmer dans les fichiers réels. Filament 5 n’a pas été confirmé dans le `composer.json` consulté. Ne pas réinstaller/recréer le framework ni mettre à jour les dépendances majeures au titre du lot 0.
+Le dépôt contient une application Laravel 13.38 avec Livewire 4.4, Filament 5.10, Pest, Pint, Larastan et un pipeline GitHub Actions corrigé au titre du lot 0. MySQL est la base cible de tous les environnements, tests inclus. Les protections de `master` et `production` sont actives ; celle de `develop` est préconfigurée par ruleset et s’appliquera dès sa publication sur le dépôt distant. Le pipeline doit encore être validé par un premier run distant. Les ADR 001–151 restent introuvables et ne doivent pas être reconstituées. Ne pas réinstaller/recréer le framework ni mettre à jour les dépendances majeures au titre du lot 0.
 
 ## Règles générales
 - Lire les documents de référence et examiner les fichiers existants avant chaque lot.
