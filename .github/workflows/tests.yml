@@ -3,15 +3,50 @@ name: tests
 on:
   push:
     branches:
-      - main
+      - develop
+      - master
+      - production
   pull_request:
+    branches:
+      - develop
+      - master
+      - production
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: planning_c2me_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      APP_ENV: testing
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: planning_c2me_test
+      DB_USERNAME: root
+      DB_PASSWORD: root
 
     steps:
       - name: Checkout code
@@ -23,16 +58,36 @@ jobs:
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
           php-version: '8.4'
+          extensions: mbstring, intl, pdo_mysql, gd, zip
+          coverage: pcov
           tools: composer:v2
-          coverage: none
 
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22'
+          node-version: '22.18.0'
+          cache: npm
 
-      - name: Setup Application
-        run: composer setup
+      - name: Copy environment file
+        run: cp .env.example .env
 
-      - name: Run CI Checks
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Generate application key
+        run: php artisan key:generate --ansi
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Validate Composer metadata
+        run: composer validate --no-check-publish
+
+      - name: Run migrations on the test database
+        run: php artisan migrate --force --no-interaction
+
+      - name: Run CI checks
         run: composer ci:check

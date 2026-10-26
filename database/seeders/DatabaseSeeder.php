@@ -15,6 +15,12 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        if (! app()->environment(['local', 'testing'])) {
+            $this->command?->warn('DatabaseSeeder ignoré : les données de démonstration sont réservées aux environnements local et testing.');
+
+            return;
+        }
+
         // User::factory(10)->create();
 
         User::factory()->create([

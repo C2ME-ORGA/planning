@@ -6,6 +6,11 @@ Tester le comportement observable, les permissions et les invariants métier. Le
 ## Couverture
 Objectif progressif : au moins 70 % puis 80 % de couverture globale. Le seuil ne remplace pas les tests spécifiques des calculs horaires, permissions, workflows, exports/versionnement et synchronisation hors ligne.
 
+Au lot 0, un seuil de transition de 35 % est appliqué par `composer test:coverage` ; il doit être relevé progressivement avec l'ajout des fonctionnalités et de leurs tests.
+
+## Base de données de test
+Les tests automatisés utilisent une base MySQL dédiée et jetable, `planning_c2me_test`, configurée dans `phpunit.xml`. La CI démarre un service MySQL isolé. Ne jamais exécuter la suite de tests contre une base de développement ou de production.
+
 ## Tests à prévoir
 - Permissions : matrice par rôle, accès direct et accès à des données hors périmètre.
 - Comptes : activation unique/expirée, réinitialisation, 2FA, expiration et révocation.

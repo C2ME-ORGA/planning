@@ -4,6 +4,8 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
+use Filament\Models\Contracts\FilamentUser;
+use Filament\Panel;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -24,7 +26,7 @@ use Illuminate\Support\Str;
  */
 #[Fillable(['name', 'email', 'password'])]
 #[Hidden(['password', 'remember_token'])]
-class User extends Authenticatable
+class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
@@ -52,5 +54,17 @@ class User extends Authenticatable
         return Str::length($initials) > 1
             ? Str::substr($initials, 0, 1).Str::substr($initials, -1)
             : $initials;
+    }
+
+    /**
+     * Restrict the Filament panel to an explicit allowlist until the role
+     * model is implemented in a later lot.
+     */
+    public function canAccessPanel(Panel $panel): bool
+    {
+        $allowedEmails = config('planning.admin_emails', []);
+
+        return is_array($allowedEmails)
+            && in_array(Str::lower($this->email), $allowedEmails, true);
     }
 }

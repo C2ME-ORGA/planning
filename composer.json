@@ -1,15 +1,16 @@
 {
     "$schema": "https://getcomposer.org/schema.json",
-    "name": "laravel/blank-livewire-starter-kit",
+    "name": "c2me/planning",
     "type": "project",
-    "description": "The official Laravel starter kit for Livewire.",
+    "description": "Application de planning et de relev\u00e9s d'heures pour SARL C2ME.",
     "keywords": [
-        "laravel",
-        "framework"
+        "c2me",
+        "planning",
+        "timesheet"
     ],
-    "license": "MIT",
     "require": {
-        "php": "^8.3",
+        "php": "^8.4",
+        "filament/filament": "^5.10",
         "laravel/framework": "^13.17",
         "laravel/tinker": "^3.0",
         "livewire/blaze": "^1.0",
@@ -45,7 +46,7 @@
             "@php -r \"file_exists('.env') || copy('.env.example', '.env');\"",
             "@php artisan key:generate",
             "@php artisan migrate --force",
-            "npm install",
+            "npm ci",
             "npm run build"
         ],
         "dev": [
@@ -60,10 +61,12 @@
         ],
         "ci:check": [
             "Composer\\Config::disableProcessTimeout",
-            "@test"
+            "@lint:check",
+            "@types:check",
+            "@test:coverage"
         ],
         "types:check": [
-            "phpstan analyse"
+            "phpstan analyse --memory-limit=1G"
         ],
         "test": [
             "@php artisan config:clear --ansi",
@@ -71,9 +74,14 @@
             "@types:check",
             "@php artisan test"
         ],
+        "test:coverage": [
+            "@php artisan config:clear --ansi",
+            "@php artisan test --coverage --min=35"
+        ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
-            "@php artisan package:discover --ansi"
+            "@php artisan package:discover --ansi",
+            "@php artisan filament:upgrade"
         ],
         "post-update-cmd": [
             "@php artisan vendor:publish --tag=laravel-assets --ansi --force"
@@ -83,7 +91,6 @@
         ],
         "post-create-project-cmd": [
             "@php artisan key:generate --ansi",
-            "@php -r \"file_exists('database/database.sqlite') || touch('database/database.sqlite');\"",
             "@php artisan migrate --graceful --ansi"
         ],
         "pre-package-uninstall": [
