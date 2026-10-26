@@ -9,6 +9,8 @@ use App\Services\Accounts\AccountAdministration;
 use Filament\Actions\ViewAction;
 use Filament\Resources\Pages\EditRecord;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class EditUser extends EditRecord
 {
@@ -33,7 +35,13 @@ class EditUser extends EditRecord
             $role = Role::from($data['role']);
             unset($data['role']);
 
-            app(AccountAdministration::class)->changeRole($record, $role, $actor);
+            try {
+                app(AccountAdministration::class)->changeRole($record, $role, $actor);
+            } catch (Throwable $exception) {
+                throw ValidationException::withMessages([
+                    'data.role' => $exception->getMessage(),
+                ]);
+            }
         }
 
         $record->update($data);

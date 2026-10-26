@@ -180,3 +180,19 @@ réauthentifier, 2FA comprise.
 - Validation métier de la durée d'activation (1440 minutes par défaut).
 - Aucun module de planning, de relevé ou d'absence n'est encore implémenté ;
   les permissions correspondantes sont posées mais non exercées par une UI.
+
+## 9. Points non couverts par le lot 3
+
+- Champs RH non explicitement spécifiés (matricule, coordonnées, date de
+  naissance, contrat, poste) : non créés.
+- Les périodes d'emploi sont append-only dans l'interface ; une correction
+  rétroactive n'est pas proposée. Une réembauche ajoute une période.
+- La sortie ne désactive pas automatiquement le compte applicatif : la
+  désactivation reste une opération distincte du lot 2, bloquée tant qu'une
+  responsabilité d'équipe reste active.
+- Une affectation déjà commencée ne peut pas être annulée ; elle doit être
+  clôturée à une date de fin. Une affectation future peut être annulée avec
+  motif et reste conservée dans l'historique.
+- Le verrou salarié utilise `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS` (5 secondes
+  par défaut). Une attente dépassée refuse l'écriture, elle ne la valide pas.
+- Le lot 3 attend la validation humaine avant toute suite.

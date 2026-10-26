@@ -23,6 +23,12 @@ enum Permission: string
     case AuditView = 'audit.view';
     case PermissionExceptionsManage = 'permission-exceptions.manage';
 
+    // Salariés et équipes (lot 3).
+    case EmployeesView = 'employees.view';
+    case EmployeesManage = 'employees.manage';
+    case TeamsView = 'teams.view';
+    case TeamsManage = 'teams.manage';
+
     // Capacités métier (appliquées par les lots ultérieurs).
     case PlanningPropose = 'planning.propose';
     case PlanningManage = 'planning.manage';
@@ -47,6 +53,10 @@ enum Permission: string
             self::RolesAssign => 'Attribuer un rôle',
             self::AuditView => 'Consulter le journal d’audit',
             self::PermissionExceptionsManage => 'Gérer les exceptions de permission',
+            self::EmployeesView => 'Consulter les salariés et leurs historiques',
+            self::EmployeesManage => 'Gérer les salariés et leurs périodes d’emploi',
+            self::TeamsView => 'Consulter les équipes et leurs historiques',
+            self::TeamsManage => 'Gérer les équipes, affectations et responsables',
             self::PlanningPropose => 'Proposer une modification de planning',
             self::PlanningManage => 'Modifier le planning',
             self::TimesheetOwn => 'Gérer ses propres relevés',

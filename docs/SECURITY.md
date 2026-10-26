@@ -15,11 +15,20 @@
 - Exceptions de permission : ciblées, motivées (≥ 10 caractères), révocables, limitées à 12 mois, interdites à soi-même et à l’Administrateur. Elles ne peuvent couvrir que `planning.propose`, `timesheet.control` et `availability.view-perimeter` ; jamais les comptes, l’audit, les absences, la validation, la correction ou la réouverture. Elles ne contournent pas les règles de sécurité S02/S03.
 - Urgence : `planning:emergency-lockdown` révoque toutes les sessions sans accorder de droit (pas de break-glass). Une perte de 2FA se traite par `planning:mfa:reset` avec acteur Bureau/Direction, motif et confirmation.
 
+## Salariés et équipes (lot 3)
+- La fiche salarié est indépendante du compte applicatif. Un compte ne peut être lié qu'à un seul salarié ; la fiche et son historique survivent à la désactivation du compte.
+- Les permissions `employees.view`, `employees.manage`, `teams.view` et `teams.manage` sont réservées au Bureau/Direction. L'Administrateur technique n'obtient aucun droit RH. Chaque service métier revérifie la permission de l'acteur, y compris pour un appel direct hors interface.
+- Une affectation ou une responsabilité doit être entièrement couverte par une période d'emploi. Les chevauchements de périodes, d'affectations principales et de responsabilités principales sont refusés, y compris en cas d'écritures concurrentes grâce à un verrou MySQL ciblé et une revalidation transactionnelle.
+- Un responsable principal doit avoir un compte actif et le rôle `chef_equipe` ou `conducteur_travaux` pendant sa responsabilité. Le retrait du rôle, la désactivation du compte ou la déliaison du compte sont refusés tant qu'une responsabilité non terminée subsiste ; une réaffectation ou une clôture explicite est requise.
+- Une sortie est refusée tant que des affectations ou responsabilités resteraient actives après la date de sortie. Aucune affectation n'est tronquée automatiquement. Une affectation future peut être annulée avec motif ; une affectation commencée se clôt avec une date de fin. L'historique est conservé dans les deux cas.
+- Aucune donnée médicale, aucun document RH et aucun justificatif ne sont stockés dans ce lot. La sortie ne désactive pas automatiquement le compte applicatif : cette opération reste distincte et auditée au lot 2.
+- Le verrou salarié utilise `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS` (5 secondes par défaut) ; en cas d'attente dépassée, l'écriture est refusée plutôt que validée sans contrôle.
+
 ## Données et audit
 - Minimiser les données personnelles et la visibilité des données d’absence.
 - Les responsables opérationnels voient la disponibilité, pas le détail médical.
 - Aucune donnée médicale ni justificatif dans le MVP.
-- Audit des changements sensibles : acteur, horodatage, objet, action, anciens/nouveaux états et motif lorsque requis.
+- Audit des changements sensibles : acteur, horodatage, objet, action, anciens/nouveaux états et motif lorsque requis. Les opérations salariés, périodes, équipes, affectations, responsabilités, sorties et réaffectations utilisent le journal existant.
 - Le journal `audit_events` est append-only : séquence strictement croissante, chaînage HMAC-SHA256 avec une clé d’audit dédiée (`PLANNING_AUDIT_KEY`), distincte d’`APP_KEY` et d’au moins 32 caractères, triggers MySQL interdisant `UPDATE`/`DELETE`, commande `planning:audit:verify`.
 - Chaque événement porte l’identifiant de sa clé (`key_id`). Les événements historiques signés avec `APP_KEY` (identifiant nul) restent vérifiables, et les clés d’audit antérieures peuvent être déclarées dans `PLANNING_AUDIT_PREVIOUS_KEYS` après rotation.
 - Les clés sensibles (mots de passe, jetons, secrets, données médicales, motifs d’absence) sont expurgées avant écriture ; l’audit ne doit pas exposer indirectement une absence ou un contenu médical. Les lots ultérieurs ne doivent jamais placer de texte médical ou de motif d’absence détaillé dans le champ libre `reason` : l’expurgation porte sur les clés, pas sur le contenu libre.

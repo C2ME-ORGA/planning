@@ -7,6 +7,7 @@ use App\Enums\Permission;
 use App\Enums\Role;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
+use App\Services\Employees\TeamLeadershipService;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -15,6 +16,7 @@ class AccountAdministration
     public function __construct(
         private readonly AuditLogger $audit,
         private readonly SessionRevoker $sessions,
+        private readonly TeamLeadershipService $leaderships,
     ) {}
 
     public function deactivate(User $target, string $reason, User $actor): void
@@ -28,6 +30,7 @@ class AccountAdministration
         }
 
         $this->assertNotLastBureauDirection($target);
+        $this->leaderships->assertDeactivationAllowed($target);
 
         DB::transaction(function () use ($target, $reason, $actor): void {
             $target->forceFill([
@@ -90,6 +93,9 @@ class AccountAdministration
         if ($target->isBureauDirection() && $role !== Role::BureauDirection) {
             $this->assertNotLastBureauDirection($target);
         }
+
+        // Une responsabilité d'équipe non terminée exige un rôle compatible.
+        $this->leaderships->assertRoleRemovalAllowed($target, $role);
 
         $target->forceFill(['role' => $role])->save();
 

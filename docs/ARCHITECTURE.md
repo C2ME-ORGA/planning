@@ -73,8 +73,55 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     d'approuver sa propre proposition ; l'auto-validation Bureau/Direction
     exige un motif et produit un événement d'audit dédié.
 -   **Configuration** : `config/planning.php` (durée d'activation, durée max
-    des exceptions, clé et identifiant d'audit), `config/session.php`
-    (15 minutes).
+    des exceptions, clé et identifiant d'audit, délai du verrou salarié),
+    `config/session.php` (15 minutes).
+
+### 3.2 Salariés, emploi et équipes (lot 3)
+
+-   **Séparation compte / salarié** : `employees` est indépendant de `users`.
+    `employees.user_id` est nullable, unique et `nullOnDelete` ; une fiche peut
+    exister sans compte et la désactivation ou la suppression technique du
+    compte ne supprime ni la fiche ni son historique.
+-   **Identité minimale** : `first_name`, `last_name`. Les champs non validés
+    (matricule, coordonnées, date de naissance, contrat, poste) ne sont pas
+    inventés dans ce lot.
+-   **Périodes d'emploi** : `employment_periods` (`employee_id`, `start_date`,
+    `end_date` nullable), dates inclusives, contrainte SQL de cohérence et
+    index. Les périodes sont append-only ; une réembauche crée une nouvelle
+    période. L'absence de chevauchement est vérifiée par
+    `EmploymentPeriodService` dans une transaction protégée par un verrou
+    MySQL nommé (`EmployeeMutationLock`). MySQL ne fournit pas d'exclusion de
+    plages : la contrainte SQL seule ne suffit pas.
+-   **Équipes** : `teams` ne porte pas de `leader_id` écrasable. Les
+    affectations sont dans `team_assignments` (`kind` = `primary` ou
+    `temporary`) et les responsabilités dans `team_leaderships`. Ces tables
+    sont historisées, sans suppression en cascade ; une affectation future peut
+    être annulée avec motif (`cancelled_at`, `cancellation_reason`), une
+    affectation commencée se clôt par une date de fin.
+-   **Cohérence** : une affectation ou une responsabilité doit être entièrement
+    couverte par une période d'emploi. Une affectation temporaire est un
+    enregistrement distinct et ne modifie jamais l'équipe principale. Une
+    équipe ne peut avoir qu'une responsabilité principale à la fois.
+-   **Responsable principal** : salarié couvert par une période d'emploi,
+    compte actif lié, rôle `chef_equipe` ou `conducteur_travaux`. La
+    réaffectation est explicite : l'ancienne responsabilité ouverte est
+    clôturée la veille de la date d'effet et l'historique est conservé. Le
+    retrait du rôle, la désactivation du compte et la déliaison du compte sont
+    refusés tant qu'une responsabilité non terminée subsiste.
+-   **Sortie** : `EmployeeLifecycleService` clôt la période d'emploi ouverte.
+    Avant écriture, il liste les affectations et responsabilités qui
+    resteraient actives après la date de sortie et refuse l'opération avec
+    `EmployeeExitBlockedException`. Aucune affectation n'est tronquée
+    automatiquement. La sortie ne désactive pas automatiquement le compte
+    applicatif : cette décision reste explicite au lot 2.
+-   **Permissions** : `employees.view`, `employees.manage`, `teams.view`,
+    `teams.manage`, accordées uniquement au Bureau/Direction. L'Administrateur
+    technique conserve uniquement `audit.view` ; les autres rôles n'ont pas
+    accès au panneau. Les services revérifient la permission de l'acteur.
+-   **Audit** : actions `employee.*`, `employment_period.*`,
+    `team.*`, `team_assignment.*`, `team_leader.*` dans le journal existant.
+    Les noms de salariés ne sont pas recopiés dans les modifications d'audit ;
+    les identifiants, dates, équipes et natures suffisent.
 
 Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
 examiner sa compatibilité et justifier le changement. Les versions

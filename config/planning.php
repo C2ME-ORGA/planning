@@ -35,6 +35,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Salariés et équipes
+    |--------------------------------------------------------------------------
+    |
+    | Délai d'attente du verrou MySQL ciblé qui sérialise les écritures sur les
+    | périodes d'emploi, les affectations et la sortie d'un salarié.
+    |
+    */
+
+    'employees' => [
+        'lock_timeout_seconds' => (int) env('PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS', 5),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Intégrité du journal d'audit
     |--------------------------------------------------------------------------
     |
