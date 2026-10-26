@@ -2,12 +2,14 @@
 
 namespace App\Filament\Resources\Users\Actions;
 
+use App\Filament\Support\ActionFeedback;
 use App\Models\User;
 use App\Services\Accounts\AccountActivationService;
 use App\Services\Accounts\AccountAdministration;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
+use Throwable;
 
 /**
  * Actions de gestion des comptes, partagées entre la liste et la fiche.
@@ -34,14 +36,18 @@ class AccountActions
                     ->maxLength(500),
             ])
             ->visible(fn (User $record): bool => auth()->user()?->can('deactivate', $record) ?? false)
-            ->action(function (User $record, array $data): void {
-                app(AccountAdministration::class)->deactivate(
-                    $record,
-                    $data['reason'],
-                    auth()->user(),
-                );
+            ->action(function (User $record, array $data, Action $action): void {
+                try {
+                    app(AccountAdministration::class)->deactivate(
+                        $record,
+                        $data['reason'],
+                        auth()->user(),
+                    );
 
-                Notification::make()->success()->title('Compte désactivé et sessions révoquées.')->send();
+                    Notification::make()->success()->title('Compte désactivé et sessions révoquées.')->send();
+                } catch (Throwable $exception) {
+                    ActionFeedback::failure($action, $exception);
+                }
             });
     }
 

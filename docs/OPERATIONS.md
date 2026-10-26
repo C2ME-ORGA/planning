@@ -180,3 +180,32 @@ réauthentifier, 2FA comprise.
 - Validation métier de la durée d'activation (1440 minutes par défaut).
 - Aucun module de planning, de relevé ou d'absence n'est encore implémenté ;
   les permissions correspondantes sont posées mais non exercées par une UI.
+
+## 9. Points non couverts par le lot 3
+
+- Champs RH non explicitement spécifiés (matricule, coordonnées, date de
+  naissance, contrat, poste) : non créés.
+- Les périodes d'emploi sont append-only dans l'interface et au niveau du
+  modèle : seules la clôture d'une période ouverte et l'ajout d'une nouvelle
+  période sont autorisés. Une réembauche ajoute une période.
+- **Procédure de correction rétroactive absente** : aucune décision ne définit
+  qui peut corriger, quels champs sont corrigeables, si la correction peut
+  traverser des périodes clôturées, ni comment revalider les affectations et
+  responsabilités dépendantes. Ne pas implémenter cette procédure sans
+  arbitrage. Décisions minimales à obtenir : acteur habilité, motif obligatoire,
+  champs et périodes concernés, conservation avant/après, effet sur les
+  affectations, responsabilités et audits.
+- La sortie propose une désactivation explicite du compte applicatif lié. Sans
+  confirmation, le compte reste actif. Avec confirmation, la désactivation est
+  immédiate et atomique avec la sortie et l'audit ; elle n'est acceptée que pour
+  une sortie effective aujourd'hui ou dans le passé. Elle est refusée si une
+  responsabilité d'équipe couvre encore la date effective de désactivation
+  (dates inclusives, end_date >= aujourd'hui) : enregistrez la sortie sans
+  désactivation, ou clôturez/réaffectez la responsabilité avant de réessayer.
+- Une affectation déjà commencée ne peut pas être annulée ; elle doit être
+  clôturée à une date de fin. Une affectation future peut être annulée avec
+  motif et reste conservée dans l'historique.
+- Les verrous nommés utilisent `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS`
+  (5 secondes par défaut). L'ordre est équipe puis salariés triés par
+  identifiant. Une attente dépassée refuse l'écriture, elle ne la valide pas.
+- Le lot 3 attend la validation humaine avant toute suite.

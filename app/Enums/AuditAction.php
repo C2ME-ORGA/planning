@@ -27,6 +27,24 @@ enum AuditAction: string
     case PermissionExceptionGranted = 'permission_exception.granted';
     case PermissionExceptionRevoked = 'permission_exception.revoked';
 
+    case EmployeeCreated = 'employee.created';
+    case EmployeeUpdated = 'employee.updated';
+    case EmployeeAccountLinked = 'employee.account_linked';
+    case EmployeeAccountUnlinked = 'employee.account_unlinked';
+    case EmploymentPeriodAdded = 'employment_period.added';
+    case EmployeeRehired = 'employee.rehired';
+    case EmployeeExited = 'employee.exited';
+
+    case TeamCreated = 'team.created';
+    case TeamUpdated = 'team.updated';
+    case TeamAssignmentCreated = 'team_assignment.created';
+    case TeamAssignmentClosed = 'team_assignment.closed';
+    case TeamAssignmentCancelled = 'team_assignment.cancelled';
+    case TeamLeaderAssigned = 'team_leader.assigned';
+    case TeamLeaderReassigned = 'team_leader.reassigned';
+    case TeamLeaderClosed = 'team_leader.closed';
+    case TeamLeaderCancelled = 'team_leader.cancelled';
+
     case SelfApprovalRecorded = 'approval.self_approval_recorded';
 
     case EmergencyLockdown = 'system.emergency_lockdown';
@@ -54,6 +72,22 @@ enum AuditAction: string
             self::BootstrapBureauCreated => 'Bootstrap Bureau / Direction',
             self::PermissionExceptionGranted => 'Exception de permission accordée',
             self::PermissionExceptionRevoked => 'Exception de permission révoquée',
+            self::EmployeeCreated => 'Salarié créé',
+            self::EmployeeUpdated => 'Salarié modifié',
+            self::EmployeeAccountLinked => 'Compte lié au salarié',
+            self::EmployeeAccountUnlinked => 'Compte délié du salarié',
+            self::EmploymentPeriodAdded => 'Période d’emploi ajoutée',
+            self::EmployeeRehired => 'Salarié réembauché',
+            self::EmployeeExited => 'Sortie du salarié enregistrée',
+            self::TeamCreated => 'Équipe créée',
+            self::TeamUpdated => 'Équipe modifiée',
+            self::TeamAssignmentCreated => 'Affectation d’équipe créée',
+            self::TeamAssignmentClosed => 'Affectation d’équipe clôturée',
+            self::TeamAssignmentCancelled => 'Affectation d’équipe annulée',
+            self::TeamLeaderAssigned => 'Responsable d’équipe désigné',
+            self::TeamLeaderReassigned => 'Responsable d’équipe réaffecté',
+            self::TeamLeaderClosed => 'Responsabilité d’équipe clôturée',
+            self::TeamLeaderCancelled => 'Responsabilité d’équipe annulée',
             self::SelfApprovalRecorded => 'Auto-validation motivée',
             self::EmergencyLockdown => 'Verrouillage d’urgence',
         };

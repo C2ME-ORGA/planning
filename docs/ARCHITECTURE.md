@@ -73,8 +73,80 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     d'approuver sa propre proposition ; l'auto-validation Bureau/Direction
     exige un motif et produit un événement d'audit dédié.
 -   **Configuration** : `config/planning.php` (durée d'activation, durée max
-    des exceptions, clé et identifiant d'audit), `config/session.php`
-    (15 minutes).
+    des exceptions, clé et identifiant d'audit, délai du verrou salarié),
+    `config/session.php` (15 minutes).
+
+### 3.2 Salariés, emploi et équipes (lot 3)
+
+-   **Séparation compte / salarié** : `employees` est indépendant de `users`.
+    `employees.user_id` est nullable, unique et `nullOnDelete` ; une fiche peut
+    exister sans compte et la désactivation ou la suppression technique du
+    compte ne supprime ni la fiche ni son historique.
+-   **Identité minimale** : `first_name`, `last_name`. Les champs non validés
+    (matricule, coordonnées, date de naissance, contrat, poste) ne sont pas
+    inventés dans ce lot.
+-   **Périodes d'emploi** : `employment_periods` (`employee_id`, `start_date`,
+    `end_date` nullable), dates inclusives, contrainte SQL de cohérence et
+    index. Les périodes sont strictement append-only ; une réembauche crée une
+    nouvelle période. Le modèle `EmploymentPeriod` refuse toute mise à jour
+    Eloquent directe et toute suppression, sans API d'autorisation temporaire.
+    La clôture légitime est écrite uniquement dans
+    `EmployeeLifecycleService::exit()`, par une écriture Query Builder ciblée
+    (`whereNull('end_date')`) après permission, verrou salarié, relecture et
+    contrôle des affectations/responsabilités, sous transaction ; le résultat
+    `$affected !== 1` provoque une exception et le rollback complet (écriture
+    SQL directe hors application possible, non couverte par les modèles).
+    L'absence de chevauchement est vérifiée par `EmploymentPeriodService` dans
+    une transaction protégée par un verrou MySQL nommé (`EmployeeMutationLock`).
+    MySQL ne fournit pas d'exclusion de plages : la contrainte SQL seule ne
+    suffit pas. Aucune procédure de correction rétroactive n'est implémentée
+    faute de règles métier ; voir `docs/OPERATIONS.md`.
+-   **Équipes** : `teams` ne porte pas de `leader_id` écrasable. Les
+    affectations sont dans `team_assignments` (`kind` = `primary` ou
+    `temporary`) et les responsabilités dans `team_leaderships`. Ces tables
+    sont historisées, sans suppression en cascade ; une affectation future peut
+    être annulée avec motif (`cancelled_at`, `cancellation_reason`), une
+    affectation commencée se clôt par une date de fin.
+-   **Cohérence** : une affectation ou une responsabilité doit être entièrement
+    couverte par une période d'emploi. Une affectation temporaire est un
+    enregistrement distinct et ne modifie jamais l'équipe principale. Une
+    équipe ne peut avoir qu'une responsabilité principale à la fois, et un
+    salarié ne peut être responsable principal que d'une seule équipe à la fois,
+    toutes équipes confondues.
+-   **Responsable principal** : salarié couvert par une période d'emploi,
+    compte actif lié, rôle `chef_equipe` ou `conducteur_travaux`. La
+    réaffectation est explicite : l'ancienne responsabilité ouverte est
+    clôturée la veille de la date d'effet et l'historique est conservé. Le
+    retrait du rôle, la désactivation du compte et la déliaison du compte sont
+    refusés tant qu'une responsabilité non terminée subsiste.
+-   **Concurrence** : les opérations de responsabilité prennent d'abord un
+    verrou nommé sur l'équipe (`TeamMutationLock`), puis les verrous salariés
+    (`EmployeeMutationLock::runMany`) triés par identifiant. L'administration
+    des comptes prend le verrou salarié avant de verrouiller la ligne `users`.
+    Les règles sont revalidées après acquisition des verrous ; une attente
+    dépassée refuse l'écriture.
+-   **Sortie** : `EmployeeLifecycleService` clôt la période d'emploi ouverte.
+    Avant écriture, il liste les affectations et responsabilités qui
+    resteraient actives après la date de sortie et refuse l'opération avec
+    `EmployeeExitBlockedException`. Aucune affectation n'est tronquée
+    automatiquement. Le même service peut, sur demande explicite, désactiver le
+    compte applicatif lié dans la même transaction : la sortie, la révocation
+    des sessions, la désactivation et leurs audits sont alors atomiques. Sans
+    demande explicite, le compte reste inchangé. Une désactivation immédiate
+    n'est acceptée que pour une sortie effective aujourd'hui ou dans le passé.
+    Elle est refusée si une responsabilité d'équipe couvre encore la date
+    effective de désactivation (dates inclusives : end_date nulle ou >=
+    aujourd'hui, y compris une responsabilité se terminant à la date de
+    sortie) ; la sortie reste alors possible sans désactivation, la
+    responsabilité étant compatible avec la clôture de la période.
+-   **Permissions** : `employees.view`, `employees.manage`, `teams.view`,
+    `teams.manage`, accordées uniquement au Bureau/Direction. L'Administrateur
+    technique conserve uniquement `audit.view` ; les autres rôles n'ont pas
+    accès au panneau. Les services revérifient la permission de l'acteur.
+-   **Audit** : actions `employee.*`, `employment_period.*`,
+    `team.*`, `team_assignment.*`, `team_leader.*` dans le journal existant.
+    Les noms de salariés ne sont pas recopiés dans les modifications d'audit ;
+    les identifiants, dates, équipes et natures suffisent.
 
 Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
 examiner sa compatibilité et justifier le changement. Les versions

@@ -1,9 +1,10 @@
 # Planning C2ME
 
 Application Laravel indépendante pour la gestion du planning et des relevés
-d'heures de SARL C2ME. Le dépôt est actuellement au socle technique du lot 0 :
-aucune fonctionnalité métier (salariés, chantiers, relevés, exports) n'est
-encore implémentée.
+d'heures de SARL C2ME. Le dépôt couvre le socle technique (lot 0),
+l'authentification, les rôles et l'audit (lot 2), ainsi que les salariés,
+périodes d'emploi et équipes (lot 3). Les chantiers, le planning, les relevés,
+les compteurs et les exports ne sont pas encore implémentés.
 
 ## Socle technique
 
@@ -96,6 +97,8 @@ Variables utiles :
 PLANNING_ACTIVATION_TTL_MINUTES=1440
 # Durée maximale d'une exception de permission (mois).
 PLANNING_EXCEPTION_MAX_MONTHS=12
+# Délai d'attente du verrou ciblé sur les écritures salarié (secondes).
+PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS=5
 # Clé dédiée au journal d'audit, distincte d'APP_KEY (32 caractères minimum).
 PLANNING_AUDIT_KEY_ID=audit-v1
 PLANNING_AUDIT_KEY=
@@ -123,6 +126,33 @@ Les exceptions de permission sont accordées et révoquées uniquement en ligne 
 commande, avec acteur Bureau/Direction, motif d'au moins 10 caractères et
 échéance. Une exception ne peut jamais porter sur la gestion des comptes, de
 l'audit, des absences, ni sur la validation, la correction ou la réouverture.
+
+### Salariés et équipes
+
+Le lot 3 ajoute deux écrans réservés au Bureau/Direction :
+
+- `/admin/employees` : fiche salarié, périodes d'emploi, compte applicatif
+  facultatif, affectations et responsabilités ;
+- `/admin/teams` : équipes, affectations historisées et responsables principaux.
+
+Une fiche salarié peut exister sans compte. Un compte ne peut être lié qu'à un
+seul salarié. Les périodes d'emploi sont inclusives, ne se chevauchent jamais
+et ne sont pas écrasées : une réembauche ajoute une nouvelle période. Une
+sortie est refusée tant qu'une affectation ou une responsabilité resterait
+active après la date de sortie ; l'utilisateur doit la clôturer ou l'annuler
+explicitement. La sortie peut proposer, via une option explicite et confirmée,
+la désactivation immédiate du compte applicatif lié ; sans cette option, le
+compte reste inchangé. Les affectations temporaires ne modifient jamais
+l'équipe principale. Un responsable principal doit être couvert par une
+période d'emploi, disposer d'un compte actif, avoir le rôle Chef d'équipe ou
+Conducteur de travaux et ne diriger qu'une seule équipe à la fois.
+
+Aucun élément RH ne peut être supprimé depuis l'interface. Les périodes
+d'emploi sont append-only au niveau du modèle ; aucune procédure de correction
+rétroactive n'est encore définie. Les écritures sensibles sont sérialisées par
+des verrous MySQL ciblés sur l'équipe puis sur les salariés concernés, dans un
+ordre déterministe ; le délai d'attente est configurable avec
+`PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS`.
 
 Le guide d'exploitation détaillé se trouve dans `docs/OPERATIONS.md`.
 
