@@ -48,11 +48,12 @@ class AccountAdministration
     /**
      * Désactivation demandée explicitement lors de la sortie d'un salarié.
      *
-     * La sortie a déjà vérifié qu'aucune affectation ni responsabilité ne
-     * reste active après la date de sortie. Ce point d'entrée conserve donc les
-     * contrôles de compte (permission, dernier Bureau, non-auto-désactivation)
-     * sans rejouer le contrôle de responsabilité, qui serait bloquant pour une
-     * responsabilité se terminant le jour même de la sortie.
+     * Règle des dates inclusives : la désactivation est immédiate, sa date
+     * effective est donc le jour courant. Une responsabilité qui couvre encore
+     * cette date (end_date nulle ou >= aujourd'hui) interdit la désactivation —
+     * y compris une responsabilité se terminant à la date de sortie, la période
+     * étant inclusive. La sortie peut alors être enregistrée sans désactivation,
+     * ou intervenir après clôture ou réaffectation explicite de la responsabilité.
      *
      * @return bool Vrai si le compte a effectivement été désactivé.
      */
@@ -76,6 +77,12 @@ class AccountAdministration
                 }
 
                 $this->assertNotLastBureauDirection($target);
+
+                // Dates inclusives : aucun compte responsable ne peut être
+                // désactivé alors qu'une responsabilité couvre encore la date
+                // effective de désactivation.
+                $this->leaderships->assertDeactivationAllowed($target);
+
                 $this->applyDeactivation($target, $reason, $actor);
             });
         });

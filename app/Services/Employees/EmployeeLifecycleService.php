@@ -21,7 +21,10 @@ use RuntimeException;
  * La sortie clôt la période d'emploi ouverte à la date demandée. Elle est
  * refusée si une affectation ou une responsabilité resterait active au-delà de
  * cette date. Aucune affectation n'est tronquée automatiquement : la correction
- * doit être explicite, puis la sortie est revalidée sous verrou.
+ * doit être explicite, puis la sortie est revalidée sous verrou. Si la
+ * désactivation du compte est demandée, une responsabilité qui couvre encore la
+ * date effective de désactivation (règle des dates inclusives) refuse
+ * l'opération avant toute écriture.
  */
 class EmployeeLifecycleService
 {
@@ -69,6 +72,19 @@ class EmployeeLifecycleService
                     throw new EmployeeExitBlockedException($blockers);
                 }
 
+                $accountLinked = $employee->user_id !== null;
+                $user = $employee->user;
+
+                // Règle des dates inclusives, vérifiée avant toute écriture :
+                // la désactivation est immédiate (date effective = aujourd'hui)
+                // et reste refusée si une responsabilité couvre encore cette
+                // date, y compris une responsabilité se terminant à la date de
+                // sortie. Rien n'est encore écrit à ce stade : l'opération reste
+                // atomique et la sortie sans désactivation reste possible.
+                if ($deactivateAccount && $user instanceof User) {
+                    $this->leaderships->assertDeactivationAllowed($user);
+                }
+
                 // Écriture Query Builder assumée et localisée ici : le modèle
                 // EmploymentPeriod refuse toute mise à jour Eloquent (append-only
                 // strict). La clôture n'est légitime qu'à cet endroit, après
@@ -92,19 +108,14 @@ class EmployeeLifecycleService
 
                 $period->refresh();
 
-                $accountLinked = $employee->user_id !== null;
                 $accountDeactivated = false;
 
-                if ($deactivateAccount && $accountLinked) {
-                    $user = $employee->user;
-
-                    if ($user instanceof User) {
-                        $accountDeactivated = $this->accounts->deactivateForEmployeeExit(
-                            $user,
-                            'Désactivation demandée lors de la sortie du salarié.',
-                            $actor,
-                        );
-                    }
+                if ($deactivateAccount && $user instanceof User) {
+                    $accountDeactivated = $this->accounts->deactivateForEmployeeExit(
+                        $user,
+                        'Désactivation demandée lors de la sortie du salarié.',
+                        $actor,
+                    );
                 }
 
                 $this->audit->record(

@@ -315,7 +315,9 @@ class TeamLeadershipService
 
     /**
      * Responsabilités non terminées à la date indiquée, y compris celles qui
-     * commencent plus tard. Elles empêchent un retrait de rôle ou de compte.
+     * commencent plus tard. Dates inclusives : une responsabilité dont la fin
+     * vaut exactement cette date la couvre encore. Elles empêchent un retrait
+     * de rôle ou de compte.
      *
      * @return Collection<int, TeamLeadership>
      */
@@ -349,6 +351,12 @@ class TeamLeadershipService
         );
     }
 
+    /**
+     * Interdit la désactivation immédiate d'un compte encore responsable
+     * principal à la date effective de désactivation (aujourd'hui), dates
+     * inclusives : une responsabilité finissant aujourd'hui couvre encore la
+     * journée et exige un compte actif.
+     */
     public function assertDeactivationAllowed(User $user): void
     {
         $responsibilities = $this->activeResponsibilitiesFor($user);

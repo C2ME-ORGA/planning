@@ -550,6 +550,68 @@ it('fails when the period is closed between the service re-read and the guarded 
     ]);
 });
 
+it('refuses the immediate deactivation while a responsibility covers the inclusive exit date', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $employee = Employee::factory()->create();
+    EmploymentPeriod::factory()->for($employee)->create([
+        'start_date' => now()->subYear()->toDateString(),
+        'end_date' => null,
+    ]);
+    $leader = User::factory()->chefEquipe()->create();
+    app(EmployeeService::class)->linkAccount($employee, $leader, $actor);
+
+    $team = Team::factory()->create(['name' => 'Équipe fin de responsabilité']);
+    $responsibility = app(TeamLeadershipService::class)->assign(
+        $team,
+        $employee->fresh(),
+        now()->subMonth()->toDateString(),
+        now()->toDateString(), // fin le jour même de la sortie (dates inclusives)
+        $actor,
+    );
+
+    // La responsabilité couvre la date de sortie ET la date effective de
+    // désactivation (aujourd'hui) : la désactivation immédiate est refusée et
+    // l'opération reste atomique — la sortie est annulée avec elle.
+    expect(fn () => app(EmployeeLifecycleService::class)->exit(
+        $employee,
+        now()->toDateString(),
+        $actor,
+        true,
+    ))->toThrow(RuntimeException::class, 'responsable principal');
+
+    expect($employee->fresh()->employmentPeriods()->first()->end_date)->toBeNull()
+        ->and($leader->fresh()->isActive())->toBeTrue()
+        ->and($responsibility->fresh()->end_date->toDateString())->toBe(now()->toDateString());
+
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::EmployeeExited->value,
+        'subject_id' => (string) $employee->id,
+    ]);
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::AccountDeactivated->value,
+        'subject_id' => (string) $leader->id,
+    ]);
+
+    // La sortie seule reste admise : une responsabilité se terminant à la date
+    // de sortie est compatible avec la clôture (elle ne dépasse pas la sortie),
+    // seule la désactivation immédiate était refusée.
+    app(EmployeeLifecycleService::class)->exit($employee, now()->toDateString(), $actor);
+
+    expect($employee->fresh()->employmentPeriods()->first()->end_date->toDateString())
+        ->toBe(now()->toDateString())
+        ->and($leader->fresh()->isActive())->toBeTrue()
+        ->and($responsibility->fresh()->end_date->toDateString())->toBe(now()->toDateString());
+
+    $this->assertDatabaseHas('audit_events', [
+        'action' => AuditAction::EmployeeExited->value,
+        'subject_id' => (string) $employee->id,
+    ]);
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::AccountDeactivated->value,
+        'subject_id' => (string) $leader->id,
+    ]);
+});
+
 it('refuses exit operations to unauthorized roles', function (Role $role) {
     $actor = User::factory()->role($role)->create();
     $employee = Employee::factory()->create();

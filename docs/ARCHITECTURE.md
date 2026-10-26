@@ -134,6 +134,11 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     des sessions, la désactivation et leurs audits sont alors atomiques. Sans
     demande explicite, le compte reste inchangé. Une désactivation immédiate
     n'est acceptée que pour une sortie effective aujourd'hui ou dans le passé.
+    Elle est refusée si une responsabilité d'équipe couvre encore la date
+    effective de désactivation (dates inclusives : end_date nulle ou >=
+    aujourd'hui, y compris une responsabilité se terminant à la date de
+    sortie) ; la sortie reste alors possible sans désactivation, la
+    responsabilité étant compatible avec la clôture de la période.
 -   **Permissions** : `employees.view`, `employees.manage`, `teams.view`,
     `teams.manage`, accordées uniquement au Bureau/Direction. L'Administrateur
     technique conserve uniquement `audit.view` ; les autres rôles n'ont pas

@@ -198,7 +198,10 @@ réauthentifier, 2FA comprise.
 - La sortie propose une désactivation explicite du compte applicatif lié. Sans
   confirmation, le compte reste actif. Avec confirmation, la désactivation est
   immédiate et atomique avec la sortie et l'audit ; elle n'est acceptée que pour
-  une sortie effective aujourd'hui ou dans le passé.
+  une sortie effective aujourd'hui ou dans le passé. Elle est refusée si une
+  responsabilité d'équipe couvre encore la date effective de désactivation
+  (dates inclusives, end_date >= aujourd'hui) : enregistrez la sortie sans
+  désactivation, ou clôturez/réaffectez la responsabilité avant de réessayer.
 - Une affectation déjà commencée ne peut pas être annulée ; elle doit être
   clôturée à une date de fin. Une affectation future peut être annulée avec
   motif et reste conservée dans l'historique.
