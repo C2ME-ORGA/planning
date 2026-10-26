@@ -21,15 +21,20 @@ d'intégration BATISTACK dans le MVP.
 
 ## 2. Socle technologique
 
-Socle envisagé, à vérifier contre le dépôt au démarrage : - PHP 8.4 ; -
-Laravel 13 ; - Filament 5 pour l'administration ; - Livewire 4 pour les
-interfaces interactives ; - MySQL ; - PWA mobile ; - Pest, Laravel Pint
-et GitHub Actions.
+Socle vérifié et retenu au lot 0 : - PHP 8.4 ; - Laravel 13 ; - Filament 5
+pour l'administration ; - Livewire 4 pour les interfaces interactives ; -
+MySQL 8 pour tous les environnements, tests automatisés inclus ; - PWA
+mobile (à implémenter) ; - Pest, Laravel Pint, Larastan et GitHub Actions.
+
+Le panneau Filament est restreint par une liste d'adresses autorisées tant
+que le modèle de rôles n'est pas implémenté. Cette restriction ne remplace
+pas les policies et la double authentification prévues au lot 2.
 
 Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
 examiner sa compatibilité et justifier le changement. Les versions
 effectives doivent être verrouillées dans `composer.lock` et
-documentées.
+documentées. La CI utilise PHP 8.4, Node 22.18.0 et MySQL 8.4 ; la base
+locale de développement peut utiliser une version MySQL 8.x compatible.
 
 ## 3. Architecture applicative proposée
 
