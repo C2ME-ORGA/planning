@@ -3,6 +3,7 @@
 use App\Models\Client;
 use App\Models\Site;
 use App\Models\User;
+use App\Support\DemoData\DemoDatasetEnvironment;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -10,6 +11,36 @@ use Illuminate\Support\Facades\DB;
 function runDemoDataset(): void
 {
     expect(Artisan::call('planning:demo:clients-sites', ['--confirm' => true]))->toBe(Command::SUCCESS);
+}
+
+/**
+ * Force une cible SQLite et une liste blanche pour la durée du callback, puis
+ * restaure la configuration MySQL des tests même en cas d'échec.
+ *
+ * @param  array<int, string>  $allowedPaths
+ */
+function withDemoSqliteTarget(string $path, array $allowedPaths, Closure $callback): mixed
+{
+    $originalDefault = config('database.default');
+    $originalSqlite = config('database.connections.sqlite');
+    $originalAllowed = config('planning.demo.allowed_sqlite_paths');
+
+    config([
+        'database.default' => 'sqlite',
+        'database.connections.sqlite.database' => $path,
+        'planning.demo.allowed_sqlite_paths' => $allowedPaths,
+    ]);
+
+    try {
+        return $callback();
+    } finally {
+        config([
+            'database.default' => $originalDefault,
+            'database.connections.sqlite' => $originalSqlite,
+            'planning.demo.allowed_sqlite_paths' => $originalAllowed,
+        ]);
+        DB::purge('sqlite');
+    }
 }
 
 it('creates the documented demo dataset without audit events or accounts', function (): void {
@@ -133,6 +164,116 @@ it('refuses a remote database host', function (): void {
 
     expect(Client::query()->count())->toBe(0);
 });
+
+it('accepts an explicitly allowed sqlite file without creating it', function (): void {
+    $directory = storage_path('framework/testing');
+    $target = $directory.DIRECTORY_SEPARATOR.'demo-allowed-'.bin2hex(random_bytes(6)).'.sqlite';
+
+    withDemoSqliteTarget($target, [$target], function () use ($target, $directory): void {
+        $state = (new DemoDatasetEnvironment)->inspect();
+        $expected = realpath($directory);
+
+        expect($expected)->not->toBeFalse()
+            ->and($state['safe'])->toBeTrue()
+            ->and($state['reasons'])->toBe([])
+            ->and($state['resolved_database'])->toBe($expected.DIRECTORY_SEPARATOR.basename($target))
+            ->and((new DemoDatasetEnvironment)->describe())->toContain(basename($target));
+    });
+
+    expect(file_exists($target))->toBeFalse();
+});
+
+it('refuses a sqlite file outside the explicit allow list without writing data', function (): void {
+    $target = storage_path('framework/testing/demo-refused-'.bin2hex(random_bytes(6)).'.sqlite');
+    $otherAllowed = storage_path('framework/testing/demo-other-'.bin2hex(random_bytes(6)).'.sqlite');
+
+    withDemoSqliteTarget($target, [$otherAllowed], function (): void {
+        $this->artisan('planning:demo:clients-sites', ['--confirm' => true])
+            ->expectsOutputToContain('SQLite non autorisé')
+            ->assertFailed();
+    });
+
+    expect(file_exists($target))->toBeFalse()
+        ->and(Client::query()->count())->toBe(0)
+        ->and(Site::query()->count())->toBe(0);
+});
+
+it('refuses an empty sqlite path', function (): void {
+    withDemoSqliteTarget('', [], function (): void {
+        $state = (new DemoDatasetEnvironment)->inspect();
+
+        expect($state['safe'])->toBeFalse()
+            ->and(implode(' ; ', $state['reasons']))->toContain('chemin SQLite absent');
+    });
+});
+
+it('refuses a relative sqlite path', function (): void {
+    withDemoSqliteTarget('database/database.sqlite', [], function (): void {
+        $state = (new DemoDatasetEnvironment)->inspect();
+
+        expect($state['safe'])->toBeFalse()
+            ->and(implode(' ; ', $state['reasons']))->toContain('chemin SQLite relatif non autorisé');
+    });
+});
+
+it('refuses a sqlite path containing a parent directory segment', function (): void {
+    $target = storage_path('framework/testing/demo-dotdot-'.bin2hex(random_bytes(6)).'.sqlite');
+    $parent = dirname($target);
+    $ambiguous = $parent.DIRECTORY_SEPARATOR.'..'.DIRECTORY_SEPARATOR.basename($parent).DIRECTORY_SEPARATOR.basename($target);
+
+    withDemoSqliteTarget($ambiguous, [$target], function (): void {
+        $state = (new DemoDatasetEnvironment)->inspect();
+
+        expect($state['safe'])->toBeFalse()
+            ->and(implode(' ; ', $state['reasons']))->toContain('segment « .. » interdit');
+    });
+
+    expect(file_exists($target))->toBeFalse();
+});
+
+it('refuses a symlinked sqlite path even when the link is allow-listed', function (): void {
+    $directory = storage_path('framework/testing/demo-symlink-'.bin2hex(random_bytes(6)));
+
+    if (! @mkdir($directory, 0777, true) && ! is_dir($directory)) {
+        $this->markTestSkipped('Répertoire temporaire indisponible.');
+    }
+
+    $target = $directory.DIRECTORY_SEPARATOR.'real.sqlite';
+    $link = $directory.DIRECTORY_SEPARATOR.'link.sqlite';
+    file_put_contents($target, '');
+
+    if (! @symlink($target, $link)) {
+        @unlink($target);
+        @rmdir($directory);
+
+        $this->markTestSkipped('Liens symboliques indisponibles sur cette plateforme.');
+    }
+
+    try {
+        withDemoSqliteTarget($link, [$link], function (): void {
+            $state = (new DemoDatasetEnvironment)->inspect();
+
+            expect($state['safe'])->toBeFalse()
+                ->and(implode(' ; ', $state['reasons']))->toContain('lien symbolique SQLite refusé');
+        });
+    } finally {
+        @unlink($link);
+        @unlink($target);
+        @rmdir($directory);
+    }
+});
+
+it('refuses sqlite memory databases and uri targets', function (string $path): void {
+    withDemoSqliteTarget($path, [$path], function (): void {
+        $state = (new DemoDatasetEnvironment)->inspect();
+
+        expect($state['safe'])->toBeFalse()
+            ->and(implode(' ; ', $state['reasons']))->toContain('mémoire ou URI refusée');
+    });
+})->with([
+    ':memory:',
+    'file:demo.sqlite',
+]);
 
 it('keeps the existing client and site permissions on demo records', function (): void {
     runDemoDataset();

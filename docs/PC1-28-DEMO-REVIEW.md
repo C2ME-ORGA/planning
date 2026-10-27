@@ -51,9 +51,13 @@ Avant toute écriture, la commande affiche l'environnement, la connexion, le
 pilote, l'hôte et la base ciblés. Elle refuse de s'exécuter si :
 
 - `APP_ENV` n'est ni `local` ni `testing` ;
-- le pilote n'est pas MySQL/MariaDB (ou SQLite local) ;
-- l'hôte MySQL n'est pas `127.0.0.1`, `localhost` ou `::1` ;
-- le nom de la base n'est pas dans la liste autorisée.
+- le pilote n'est ni MySQL/MariaDB ni SQLite ;
+- pour MySQL/MariaDB, l'hôte n'est pas `127.0.0.1`, `localhost` ou `::1` ;
+- pour MySQL/MariaDB, le nom de la base n'est pas dans la liste autorisée ;
+- pour SQLite, le fichier cible n'est pas un chemin absolu explicitement
+  autorisé.
+
+### MySQL / MariaDB
 
 La liste par défaut est :
 
@@ -70,6 +74,41 @@ PLANNING_DEMO_ALLOWED_DATABASES=planning_c2me,planning_c2me_demo
 ```
 
 Si `DB_URL` est utilisée, l'hôte et le nom de base de l'URL sont contrôlés.
+
+### SQLite
+
+SQLite est accepté uniquement si le chemin déclaré correspond exactement à une
+entrée de `planning.demo.allowed_sqlite_paths`. La valeur par défaut ne contient
+que le fichier standard de l'application :
+
+```text
+database/database.sqlite
+```
+
+Pour autoriser un autre fichier local, renseigner son chemin **absolu** :
+
+```dotenv
+PLANNING_DEMO_ALLOWED_SQLITE_PATHS=/chemin/absolu/vers/demo.sqlite
+```
+
+Plusieurs chemins peuvent être séparés par des virgules. Chaque entrée désigne
+un fichier précis : aucun motif (`*.sqlite`, `*.db`), aucun répertoire et aucun
+chemin relatif ne sont acceptés.
+
+La commande canonicalise le chemin (fichier existant ou répertoire parent) puis
+le compare à la liste. Sont refusés : un chemin vide, relatif, contenant un
+segment `..`, un caractère NUL ou une barre finale ; une base `:memory:` ou une
+URI `file:` ; un lien symbolique ; un répertoire parent introuvable ou non
+résoluble. Le chemin affiché par la commande est le chemin canonique réellement
+contrôlé. L'inspection ne crée aucun fichier.
+
+Les entrées de la liste blanche ne sont volontairement pas résolues au niveau de
+leur dernier segment : remplacer un fichier autorisé par un lien symbolique vers
+une autre cible provoque donc un refus. Les liens physiques (hardlinks) ne sont
+pas détectables de façon portable et restent une limite connue.
+
+Pour SQLite, préférer `DB_DATABASE` avec un chemin absolu. Une URL SQLite dont
+le chemin résolu est relatif est refusée par la politique ci-dessus.
 
 Le contrôle porte sur la configuration déclarée : un tunnel local volontairement
 mis en place vers une base distante n'est pas détectable par la commande.
