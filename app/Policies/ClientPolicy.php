@@ -25,7 +25,17 @@ class ClientPolicy
 
     public function update(User $actor, Client $client): bool
     {
-        return $actor->hasPermission(Permission::ClientsManage);
+        return $actor->hasPermission(Permission::ClientsManage) && ! $client->isArchived();
+    }
+
+    public function archive(User $actor, Client $client): bool
+    {
+        return $actor->hasPermission(Permission::ClientsManage) && ! $client->isArchived();
+    }
+
+    public function restore(User $actor, Client $client): bool
+    {
+        return $actor->hasPermission(Permission::ClientsRestore) && $client->isArchived();
     }
 
     public function delete(User $actor, Client $client): bool
@@ -34,6 +44,16 @@ class ClientPolicy
     }
 
     public function deleteAny(User $actor): bool
+    {
+        return false;
+    }
+
+    public function forceDelete(User $actor, Client $client): bool
+    {
+        return false;
+    }
+
+    public function forceDeleteAny(User $actor): bool
     {
         return false;
     }

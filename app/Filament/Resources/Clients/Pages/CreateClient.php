@@ -3,6 +3,8 @@
 namespace App\Filament\Resources\Clients\Pages;
 
 use App\Filament\Resources\Clients\ClientResource;
+use App\Filament\Support\ClientDuplicateAlert;
+use App\Models\Client;
 use App\Models\User;
 use App\Services\Clients\ClientService;
 use Filament\Resources\Pages\CreateRecord;
@@ -17,6 +19,11 @@ class CreateClient extends CreateRecord
         /** @var User $actor */
         $actor = auth()->user();
 
-        return app(ClientService::class)->create($data, $actor);
+        /** @var Client $client */
+        $client = app(ClientService::class)->create($data, $actor);
+
+        ClientDuplicateAlert::notify($client, $actor);
+
+        return $client;
     }
 }

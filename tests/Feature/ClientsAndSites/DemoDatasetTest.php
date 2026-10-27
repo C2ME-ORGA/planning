@@ -63,8 +63,15 @@ it('creates the documented demo dataset without audit events or accounts', funct
         expect($client->company_name)->toEndWith('(démo)')
             ->and(mb_strlen($client->company_name))->toBeLessThanOrEqual(190)
             ->and(mb_strlen($client->address))->toBeLessThanOrEqual(500)
+            ->and($client->contact_name === null || mb_strlen($client->contact_name) <= 190)->toBeTrue()
+            ->and($client->street)->not->toBeEmpty()
+            ->and($client->postal_code)->not->toBeEmpty()
+            ->and($client->city)->not->toBeEmpty()
+            ->and($client->country)->toBe('France')
             ->and($client->phone === null || mb_strlen((string) $client->phone) <= 40)->toBeTrue()
-            ->and($client->email === null || str_ends_with($client->email, '.example.test'))->toBeTrue();
+            ->and($client->email)->not->toBeNull()
+            ->and(filter_var($client->email, FILTER_VALIDATE_EMAIL))->not->toBeFalse()
+            ->and(str_ends_with((string) $client->email, '.example.test'))->toBeTrue();
     }
 
     foreach ($sites as $site) {
@@ -72,7 +79,7 @@ it('creates the documented demo dataset without audit events or accounts', funct
             ->and($site->client->company_name)->toEndWith('(démo)')
             ->and(mb_strlen($site->name))->toBeLessThanOrEqual(190)
             ->and(mb_strlen($site->address))->toBeLessThanOrEqual(500)
-            ->and(mb_strlen($site->status))->toBeLessThanOrEqual(40);
+            ->and($site->statusEnum())->not->toBeNull();
     }
 });
 
@@ -104,7 +111,26 @@ it('is idempotent and preserves records outside the demo dataset', function (): 
         ->and(Site::query()->where('name', 'like', '%(démo)')->count())->toBe(40)
         ->and($existingClient->fresh()?->company_name)->toBe('Client existant hors démonstration')
         ->and($existingSite->fresh()?->name)->toBe('Chantier existant hors démonstration')
-        ->and($existingSite->fresh()?->client_id)->toBe($existingClient->id);
+        ->and($existingSite->fresh()?->client_id)->toBe($existingClient->id)
+        ->and($existingClient->fresh()?->street)->toBeNull()
+        ->and($existingClient->fresh()?->email)->toBeNull();
+});
+
+it('completes structured fields of an existing demo client without overwriting entered values', function (): void {
+    $client = Client::query()->create([
+        'company_name' => 'Atelier du Vieux Canal (démo)',
+        'address' => '12 quai des Tanneurs, 67000 Strasbourg',
+        'contact_name' => 'Contact déjà saisi',
+    ]);
+
+    runDemoDataset();
+
+    expect($client->fresh()->contact_name)->toBe('Contact déjà saisi')
+        ->and($client->fresh()->street)->toBe('12 quai des Tanneurs')
+        ->and($client->fresh()->postal_code)->toBe('67000')
+        ->and($client->fresh()->city)->toBe('Strasbourg')
+        ->and($client->fresh()->country)->toBe('France')
+        ->and($client->fresh()->email)->toBe('contact@atelier-vieux-canal.example.test');
 });
 
 it('shows the target database and refuses to write without confirmation', function (): void {

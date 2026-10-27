@@ -266,6 +266,31 @@ personnels non nécessaires dans les journaux.
 Les opérations groupées du chef d'équipe doivent produire une trace
 distincte par relevé.
 
+### 7.1 Chantiers et clients (PC1-28)
+
+Le référentiel des statuts de chantier et la matrice des transitions sont
+centralisés dans `App\Enums\SiteStatus`. La colonne `sites.status` reste une
+chaîne courte ; les valeurs historiques connues sont normalisées par migration.
+Toute transition ordinaire ou réouverture passe par `App\Services\Sites\SiteService`,
+qui vérifie la matrice, les motifs, les permissions et écrit l'audit dans la même
+transaction. Les formulaires Filament ne permettent pas de saisir un statut
+libre.
+
+L'archivage d'un client est conditionné à l'absence de chantier non terminal ;
+les chantiers archivés sont inclus dans le contrôle. L'archivage et la
+restauration d'un client sont indépendants de l'archivage des chantiers. La
+restauration exige la permission dédiée `clients.restore`, distincte de
+`clients.manage`. La réouverture d'un chantier exige `sites.reopen`, distincte de
+`sites.manage`.
+
+Les clients et les chantiers ne sont jamais supprimés physiquement : les
+policies refusent la suppression et les modèles bloquent l'événement `deleting`.
+L'archivage est le seul mécanisme de retrait.
+
+Les adresses clients sont structurées ; le champ historique `address` est
+conservé sans découpe automatique. Les doublons de raison sociale ou d'e-mail
+sont signalés après enregistrement, sans contrainte d'unicité ni blocage.
+
 ## 8. PWA et synchronisation
 
 ### 8.1 Séparation client/serveur

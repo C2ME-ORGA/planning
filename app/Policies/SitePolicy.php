@@ -33,12 +33,37 @@ class SitePolicy
         return $actor->hasPermission(Permission::SitesManage) && ! $site->isArchived();
     }
 
+    public function transition(User $actor, Site $site): bool
+    {
+        return $actor->hasPermission(Permission::SitesManage)
+            && ! $site->isArchived()
+            && ($site->statusEnum()?->allowedTransitions() ?? []) !== [];
+    }
+
+    public function reopen(User $actor, Site $site): bool
+    {
+        return $actor->hasPermission(Permission::SitesReopen)
+            && $actor->hasPermission(Permission::SitesManage)
+            && ! $site->isArchived()
+            && ($site->statusEnum()?->isTerminal() ?? false);
+    }
+
     public function delete(User $actor, Site $site): bool
     {
         return false;
     }
 
     public function deleteAny(User $actor): bool
+    {
+        return false;
+    }
+
+    public function forceDelete(User $actor, Site $site): bool
+    {
+        return false;
+    }
+
+    public function forceDeleteAny(User $actor): bool
     {
         return false;
     }

@@ -15,7 +15,9 @@ déploiement.
 - Les données sont additives, créées dans une transaction et identifiées par le
   suffixe `(démo)` dans la raison sociale et le nom du chantier.
 - Une seconde exécution ne crée pas de doublon : chaque client est retrouvé par
-  sa raison sociale exacte, chaque chantier par son couple client + nom.
+  sa raison sociale exacte, chaque chantier par son couple client + nom. Les
+  champs structurés absents d'un client de démonstration existant sont complétés
+  sans écraser une valeur déjà saisie.
 
 ## 2. Volume et contenu
 
@@ -31,16 +33,20 @@ déploiement.
 Le jeu couvre :
 
 - des raisons sociales courtes, longues et proches (recherche et tri) ;
-- des adresses très courtes et très longues (troncature d'affichage) ;
-- des téléphones et e-mails présents ou absents ;
+- des adresses structurées avec ou sans complément, dont certaines très
+  longues (troncature d'affichage) ;
+- des contacts principaux renseignés ou absents ;
+- des téléphones présents ou absents, tous au format français courant ;
+- des e-mails présents pour tous les clients, sur le domaine réservé
+  `example.test` ;
 - des noms de chantiers courts et longs ;
 - plusieurs chantiers actifs pour un même client ;
 - des chantiers archivés, dont un par client concerné.
 
-Les statuts utilisés sont **des libellés de démonstration, pas une liste
-officielle** : `en préparation`, `en cours`, `suspendu`, `réception`,
-`terminé`. La liste et les transitions restent à arbitrer
-(`docs/PC1-28-DECISIONS.md`, point 1).
+Les statuts utilisés sont ceux du référentiel officiel `SiteStatus` :
+`a_preparer`, `planifie`, `en_cours`, `suspendu`, `en_reception`, `termine`,
+`annule`. La matrice et les règles de transition sont décrites dans
+`docs/PC1-28-DECISIONS.md`.
 
 Aucune donnée personnelle, commerciale ou réelle n'est utilisée. Les adresses
 e-mail utilisent exclusivement le domaine réservé `example.test`.
@@ -194,6 +200,7 @@ Le panneau Filament est déclaré sur `/admin` (`AdminPanelProvider`), avec les
 ressources Clients et Chantiers :
 
 - `/admin/clients`
+- `/admin/clients/{id}` (consultation)
 - `/admin/clients/{id}/edit`
 - `/admin/sites`
 - `/admin/sites/{id}/edit`
@@ -210,36 +217,41 @@ ressources Clients et Chantiers :
 | 2 | Rechercher `Coopérative` | La longue raison sociale est retrouvée. |
 | 3 | Trier par raison sociale | L'ordre alphabétique reste lisible avec les accents. |
 | 4 | Vérifier la colonne « Chantiers » | 5 pour Groupe Immobilier Horizon et la Société Coopérative ; 0 pour deux clients. |
-| 5 | Ouvrir une fiche client | Adresse, téléphone et e-mail s'affichent ; les champs facultatifs vides ne cassent pas la mise en page. |
-| 6 | Vérifier les actions client | « Modifier » visible ; aucune action de suppression. |
-| 7 | Ouvrir `/admin/sites` | 40 chantiers, triés par nom, avec client, adresse, statut et date d'archivage. |
-| 8 | Filtrer « Archivage » sur « Actifs » | 34 chantiers. |
-| 9 | Filtrer « Archivage » sur « Archivés » | 6 chantiers, avec une date affichée. |
-| 10 | Rechercher un client depuis la liste des chantiers | Les chantiers du client sont retrouvés. |
-| 11 | Ouvrir un chantier actif | Formulaire accessible, client associé préchargé. |
-| 12 | Ouvrir l'édition d'un chantier archivé | Accès refusé (403) ; le chantier reste consultable dans la liste. |
-| 13 | Vérifier les actions d'un chantier archivé | Ni « Archiver » ni « Modifier ». |
-| 14 | Vérifier les actions d'un chantier actif | « Archiver » et « Modifier » visibles pour Bureau / Direction. |
-| 15 | Vérifier les libellés longs | Les noms et adresses longs sont tronqués ou passent à la ligne sans casser le tableau. |
-| 16 | Se connecter en Administrateur technique | `/admin/clients` et `/admin/sites` refusés ; l'audit reste accessible en lecture seule. |
-| 17 | Se connecter avec un rôle opérationnel | Aucun accès au panneau d'administration. |
-| 18 | Vérifier l'absence de suppression | Aucune action de suppression physique sur clients ou chantiers. |
+| 5 | Ouvrir une fiche client | Adresse structurée, contact, téléphone et e-mail s'affichent ; les champs facultatifs vides ne cassent pas la mise en page. |
+| 6 | Vérifier les actions client | « Consulter » et « Modifier » visibles ; aucune action de suppression. |
+| 7 | Créer puis archiver un client sans chantier actif | Le client est archivé, reste dans la liste avec le badge « Archivé » et n'est plus modifiable. |
+| 8 | Archiver un client ayant un chantier actif | Refus explicite avec le nombre et les noms des chantiers bloquants. |
+| 9 | Restaurer le client archivé | Action « Restaurer » visible pour Bureau / Direction uniquement ; les chantiers restent inchangés. |
+| 10 | Ouvrir `/admin/sites` | 40 chantiers, triés par nom, avec client, adresse, statut et date d'archivage. |
+| 11 | Filtrer « Archivage » sur « Actifs » | 34 chantiers. |
+| 12 | Filtrer « Archivage » sur « Archivés » | 6 chantiers, avec une date affichée. |
+| 13 | Rechercher un client depuis la liste des chantiers | Les chantiers du client sont retrouvés. |
+| 14 | Ouvrir un chantier actif | Formulaire accessible, client associé préchargé, statut affiché en lecture seule. |
+| 15 | Changer le statut d'un chantier actif | Seules les destinations de la matrice sont proposées ; l'action est auditée. |
+| 16 | Annuler un chantier « En cours » sans motif | Refus côté serveur ; l'annulation avec motif est acceptée et tracée. |
+| 17 | Réouvrir un chantier terminé | Action distincte, motif obligatoire, statut cible opérationnel, audit `site.reopened`. |
+| 18 | Ouvrir l'édition d'un chantier archivé | Accès refusé (403) ; le chantier reste consultable dans la liste. |
+| 19 | Vérifier les actions d'un chantier archivé | Ni « Archiver », ni « Modifier », ni changement de statut, ni réouverture. |
+| 20 | Vérifier les actions d'un chantier actif | « Archiver », « Modifier », « Changer le statut » et, si terminal, « Réouvrir ». |
+| 21 | Vérifier les libellés longs | Les noms et adresses longs sont tronqués ou passent à la ligne sans casser le tableau. |
+| 22 | Se connecter en Administrateur technique | `/admin/clients` et `/admin/sites` refusés ; l'audit reste accessible en lecture seule. |
+| 23 | Se connecter avec un rôle opérationnel | Aucun accès au panneau d'administration. |
+| 24 | Vérifier l'absence de suppression | Aucune action de suppression physique sur clients ou chantiers. |
 
 Cette checklist décrit des résultats attendus ; elle ne constitue pas une
 vérification visuelle déjà réalisée par l'auteur du jeu de données.
 
 ## 8. Limites et points ouverts
 
-- Les statuts sont des libellés de démonstration ; aucune transition ni
-  signification officielle n'est introduite.
 - Aucun compte ni mot de passe de démonstration n'est créé par le seeder.
 - Aucun historique d'audit factice n'est créé par le seeder. En revanche, toute
   modification effectuée ensuite depuis l'interface produit un événement
   d'audit réel, ce qui est le comportement attendu.
 - Le jeu ne couvre ni le planning, ni les relevés d'heures, ni les salariés.
-- L'affichage par défaut des chantiers archivés, l'unicité des clients et la
-  suppression/archivage des clients restent à arbitrer
-  (`docs/PC1-28-DECISIONS.md`).
+- L'archivage d'un chantier n'est pas réversible depuis l'interface ; la
+  restauration d'un chantier n'a pas été arbitrée.
+- Les doublons de clients sont signalés sans blocage ; ils ne sont pas fusionnés
+  automatiquement.
 - Aucune commande de purge n'est fournie : supprimer des lignes de démonstration
   est une opération d'administrateur local, à effectuer uniquement sur une base
   identifiée comme jetable ou de démonstration.

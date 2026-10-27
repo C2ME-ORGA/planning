@@ -3,6 +3,7 @@
 namespace App\Filament\Resources\Clients\Pages;
 
 use App\Filament\Resources\Clients\ClientResource;
+use App\Filament\Support\ClientDuplicateAlert;
 use App\Models\Client;
 use App\Models\User;
 use App\Services\Clients\ClientService;
@@ -19,6 +20,10 @@ class EditClient extends EditRecord
         /** @var User $actor */
         $actor = auth()->user();
 
-        return app(ClientService::class)->update($record, $data, $actor);
+        $client = app(ClientService::class)->update($record, $data, $actor);
+
+        ClientDuplicateAlert::notify($client, $actor);
+
+        return $client;
     }
 }

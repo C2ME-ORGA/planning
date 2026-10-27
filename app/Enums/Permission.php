@@ -5,10 +5,10 @@ namespace App\Enums;
 /**
  * Capacités vérifiées côté serveur.
  *
- * Les capacités du lot 2 couvrent les comptes, le rôle et l'audit. Les
- * capacités métier sont déclarées ici parce que les arbitrages validés les
- * citent explicitement, mais elles restent sans effet tant que les lots 3 à 9
- * n'ont pas implémenté les policies correspondantes.
+ * Les capacités des lots 2 à 4 sont appliquées par les policies et services
+ * correspondants (comptes, audit, salariés, équipes, clients et chantiers).
+ * Les capacités des lots ultérieurs restent déclarées ici jusqu'à ce que leurs
+ * policies soient implémentées.
  */
 enum Permission: string
 {
@@ -32,8 +32,10 @@ enum Permission: string
     // Clients et chantiers (lot 4).
     case ClientsView = 'clients.view';
     case ClientsManage = 'clients.manage';
+    case ClientsRestore = 'clients.restore';
     case SitesView = 'sites.view';
     case SitesManage = 'sites.manage';
+    case SitesReopen = 'sites.reopen';
 
     // Capacités métier (appliquées par les lots ultérieurs).
     case PlanningPropose = 'planning.propose';
@@ -65,8 +67,10 @@ enum Permission: string
             self::TeamsManage => 'Gérer les équipes, affectations et responsables',
             self::ClientsView => 'Consulter les clients',
             self::ClientsManage => 'Gérer les clients',
+            self::ClientsRestore => 'Restaurer un client archivé',
             self::SitesView => 'Consulter les chantiers',
             self::SitesManage => 'Gérer les chantiers',
+            self::SitesReopen => 'Réouvrir un chantier terminé ou annulé',
             self::PlanningPropose => 'Proposer une modification de planning',
             self::PlanningManage => 'Modifier le planning',
             self::TimesheetOwn => 'Gérer ses propres relevés',
