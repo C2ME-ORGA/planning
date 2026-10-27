@@ -9,6 +9,7 @@ use App\Models\Client;
 use App\Models\Employee;
 use App\Models\EmploymentPeriod;
 use App\Models\PermissionException;
+use App\Models\PlanningAssignment;
 use App\Models\Site;
 use App\Models\Team;
 use App\Models\TeamAssignment;
@@ -20,6 +21,7 @@ use App\Policies\ClientPolicy;
 use App\Policies\EmployeePolicy;
 use App\Policies\EmploymentPeriodPolicy;
 use App\Policies\PermissionExceptionPolicy;
+use App\Policies\PlanningAssignmentPolicy;
 use App\Policies\SitePolicy;
 use App\Policies\TeamAssignmentPolicy;
 use App\Policies\TeamLeadershipPolicy;
@@ -59,6 +61,7 @@ class AccessServiceProvider extends ServiceProvider
         Gate::policy(Team::class, TeamPolicy::class);
         Gate::policy(TeamAssignment::class, TeamAssignmentPolicy::class);
         Gate::policy(TeamLeadership::class, TeamLeadershipPolicy::class);
+        Gate::policy(PlanningAssignment::class, PlanningAssignmentPolicy::class);
 
         User::observe(UserObserver::class);
 

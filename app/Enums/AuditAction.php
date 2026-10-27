@@ -55,6 +55,9 @@ enum AuditAction: string
     case SiteStatusChanged = 'site.status_changed';
     case SiteReopened = 'site.reopened';
 
+    case PlanningAssignmentCreated = 'planning.assignment_created';
+    case PlanningAssignmentUpdated = 'planning.assignment_updated';
+
     case SelfApprovalRecorded = 'approval.self_approval_recorded';
 
     case EmergencyLockdown = 'system.emergency_lockdown';
@@ -107,6 +110,8 @@ enum AuditAction: string
             self::SiteArchived => 'Chantier archivé',
             self::SiteStatusChanged => 'Statut du chantier modifié',
             self::SiteReopened => 'Chantier réouvert',
+            self::PlanningAssignmentCreated => 'Affectation de planning créée',
+            self::PlanningAssignmentUpdated => 'Affectation de planning modifiée',
             self::SelfApprovalRecorded => 'Auto-validation motivée',
             self::EmergencyLockdown => 'Verrouillage d’urgence',
         };
