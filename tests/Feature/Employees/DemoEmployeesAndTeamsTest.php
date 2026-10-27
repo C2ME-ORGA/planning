@@ -1,13 +1,13 @@
 <?php
 
-use App\\Models\\Employee;
-use App\\Models\\EmploymentPeriod;
-use App\\Models\\Team;
-use App\\Models\\TeamAssignment;
-use App\\Models\\User;
-use Illuminate\\Console\\Command;
-use Illuminate\\Support\\Facades\\Artisan;
-use Illuminate\\Support\\Facades\\DB;
+use App\Models\Employee;
+use App\Models\EmploymentPeriod;
+use App\Models\Team;
+use App\Models\TeamAssignment;
+use App\Models\User;
+use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 
 function runDemoEmployeesAndTeams(): void
 {
