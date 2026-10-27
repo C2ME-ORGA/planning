@@ -11,8 +11,8 @@ use Illuminate\Validation\ValidationException;
 
 beforeEach(function (): void {
     config([
-        'planning.audit_key' => str_repeat('a', 32),
-        'planning.audit_key_id' => 'test-key',
+        'planning.audit.key' => str_repeat('a', 32),
+        'planning.audit.key_id' => 'test-key',
     ]);
 });
 
