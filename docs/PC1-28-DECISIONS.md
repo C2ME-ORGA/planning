@@ -24,6 +24,19 @@
 - Aucune suppression physique n'est exposée pour les clients ou les chantiers.
 - La liste affiche actuellement les chantiers actifs et archivés et propose un filtre d'archivage. Ce comportement par défaut n'est pas arbitré : il correspond au point 5 ci-dessous et aucun filtre par défaut n'a été ajouté.
 
+## Complément pour la revue visuelle
+
+- Un jeu de données fictif est disponible via
+  `php artisan planning:demo:clients-sites --confirm`, sur une base locale
+  explicitement autorisée uniquement. Il est séparé de `DatabaseSeeder`.
+- Il crée 16 clients et 40 chantiers identifiés par le suffixe `(démo)`, dont
+  6 chantiers archivés et 2 clients sans chantier.
+- Il ne crée aucun compte, aucun mot de passe et aucun événement d'audit.
+- Les libellés `en préparation`, `en cours`, `suspendu`, `réception` et
+  `terminé` sont uniquement des valeurs de démonstration. Ils ne constituent pas
+  la liste officielle des statuts.
+- Procédure détaillée et checklist : `docs/PC1-28-DEMO-REVIEW.md`.
+
 ## Points à arbitrer avant clôture PC1-28
 
 1. La liste officielle des statuts chantier et les transitions autorisées.

@@ -96,3 +96,18 @@ mécanisme de sérialisation ; ce n'est pas un test multi-processus.
 Résultats de référence du lot 3 après corrections d’audit et revue technique :
 118 tests, 635 assertions, Pint et Larastan verts. Les migrations ont été rejouées intégralement sur
 `planning_c2me_test`, puis annulées et réappliquées pour vérifier les deux sens.
+
+## Jeu de démonstration PC1-28 (27/10/2026)
+
+- `tests/Feature/ClientsAndSites/DemoDatasetTest.php` : création des 16 clients
+  et 40 chantiers, relations client-chantier, 6 chantiers archivés, 2 clients
+  sans chantier, absence de compte et d'événement d'audit, idempotence sans
+  doublon, préservation des données hors démonstration, refus sans `--confirm`,
+  refus en production, refus d'une base ou d'un hôte non autorisés, maintien des
+  permissions Filament existantes.
+- Les données sont créées directement par `DemoClientsAndSitesSeeder`, sans
+  passer par les services métier, afin de ne pas fabriquer de faux événements
+  d'audit. La procédure de revue est décrite dans
+  `docs/PC1-28-DEMO-REVIEW.md`.
+
+Résultats de référence : 148 tests, 1240 assertions, Pint et Larastan verts.

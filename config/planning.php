@@ -66,4 +66,24 @@ return [
         'previous_keys' => is_array($previousAuditKeys) ? $previousAuditKeys : [],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Jeu de données de démonstration
+    |--------------------------------------------------------------------------
+    |
+    | La commande `planning:demo:clients-sites` refuse de s'exécuter sur une
+    | base qui n'est pas explicitement autorisée. La liste par défaut ne
+    | contient que des bases locales de développement, de test ou de
+    | démonstration. Ne jamais y ajouter une base de production.
+    |
+    */
+
+    'demo' => [
+        'allowed_hosts' => ['127.0.0.1', 'localhost', '::1'],
+        'allowed_databases' => array_values(array_filter(array_map(
+            static fn (string $name): string => trim($name),
+            explode(',', (string) env('PLANNING_DEMO_ALLOWED_DATABASES', 'planning_c2me,planning_c2me_test,planning_c2me_demo')),
+        ))),
+    ],
+
 ];
