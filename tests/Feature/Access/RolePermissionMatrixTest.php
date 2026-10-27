@@ -32,6 +32,12 @@ it('applies the approved role matrix on the server', function () {
             Permission::WorkflowCorrect,
             Permission::WorkflowReopen,
             Permission::AbsenceManage,
+            Permission::ClientsView,
+            Permission::ClientsManage,
+            Permission::ClientsRestore,
+            Permission::SitesView,
+            Permission::SitesManage,
+            Permission::SitesReopen,
         ],
         Role::Conducteur->value => [
             Permission::PlanningPropose,
@@ -61,6 +67,19 @@ it('applies the approved role matrix on the server', function () {
                 ->toBe(in_array($permission, $expected[$role->value], true), "{$role->value} / {$permission->value}");
         }
     }
+});
+
+it('keeps client restoration on the combined Bureau/Direction role only', function () {
+    $holders = array_values(array_filter(
+        Role::cases(),
+        static fn (Role $role): bool => $role->hasPermission(Permission::ClientsRestore),
+    ));
+
+    // Le référentiel ne distingue pas « Bureau » de « Direction » : le rôle
+    // unique `bureau_direction` porte la permission. L'écart avec l'arbitrage
+    // « Direction seule » est documenté dans docs/PC1-28-DECISIONS.md.
+    expect($holders)->toBe([Role::BureauDirection])
+        ->and(array_key_exists('direction', Role::options()))->toBeFalse();
 });
 
 it('never grants business rights to the technical administrator', function () {

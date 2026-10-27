@@ -45,6 +45,16 @@ enum AuditAction: string
     case TeamLeaderClosed = 'team_leader.closed';
     case TeamLeaderCancelled = 'team_leader.cancelled';
 
+    case ClientCreated = 'client.created';
+    case ClientUpdated = 'client.updated';
+    case ClientArchived = 'client.archived';
+    case ClientRestored = 'client.restored';
+    case SiteCreated = 'site.created';
+    case SiteUpdated = 'site.updated';
+    case SiteArchived = 'site.archived';
+    case SiteStatusChanged = 'site.status_changed';
+    case SiteReopened = 'site.reopened';
+
     case SelfApprovalRecorded = 'approval.self_approval_recorded';
 
     case EmergencyLockdown = 'system.emergency_lockdown';
@@ -88,6 +98,15 @@ enum AuditAction: string
             self::TeamLeaderReassigned => 'Responsable d’équipe réaffecté',
             self::TeamLeaderClosed => 'Responsabilité d’équipe clôturée',
             self::TeamLeaderCancelled => 'Responsabilité d’équipe annulée',
+            self::ClientCreated => 'Client créé',
+            self::ClientUpdated => 'Client modifié',
+            self::ClientArchived => 'Client archivé',
+            self::ClientRestored => 'Client restauré',
+            self::SiteCreated => 'Chantier créé',
+            self::SiteUpdated => 'Chantier modifié',
+            self::SiteArchived => 'Chantier archivé',
+            self::SiteStatusChanged => 'Statut du chantier modifié',
+            self::SiteReopened => 'Chantier réouvert',
             self::SelfApprovalRecorded => 'Auto-validation motivée',
             self::EmergencyLockdown => 'Verrouillage d’urgence',
         };

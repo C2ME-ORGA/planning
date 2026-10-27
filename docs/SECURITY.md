@@ -27,6 +27,17 @@
 - Les périodes d'emploi sont strictement append-only : le modèle refuse toute mise à jour Eloquent directe et toute suppression, sans méthode d'autorisation temporaire. La clôture n'est possible qu'à un point unique autorisé — `EmployeeLifecycleService::exit()`, sous permission, verrou, relecture et transaction — via une écriture ciblée dont le compte de lignes affectées est vérifié (0 ligne = exception et rollback). Une écriture SQL directe reste possible hors application et reste une limite documentée. Aucune procédure de correction rétroactive n'est définie à ce stade.
 - Les verrous nommés utilisent `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS` (5 secondes par défaut) ; en cas d'attente dépassée, l'écriture est refusée plutôt que validée sans contrôle. L'ordre est équipe puis salariés triés par identifiant.
 
+## Clients et chantiers (PC1-28)
+- `clients.view`, `clients.manage`, `sites.view` et `sites.manage` sont réservées au Bureau/Direction. La restauration d'un client exige `clients.restore` et la réouverture d'un chantier exige `sites.reopen`, permissions distinctes accordées au seul rôle `bureau_direction` et non éligibles aux exceptions temporaires.
+- Le référentiel ne distingue pas un rôle « Bureau » d'un rôle « Direction » : `bureau_direction` est un rôle combiné. La restriction de `clients.restore` au seul « Direction » ne peut donc pas être garantie sans séparation préalable des rôles ; cet écart est documenté dans `docs/PC1-28-DECISIONS.md` et couvert par un test de matrice explicite.
+- Les transitions de statut sont imposées par `SiteService` selon la matrice `SiteStatus`, y compris pour un appel direct hors interface. Aucun statut libre n'est accepté. L'annulation depuis `En cours` et toute réouverture exigent un motif non vide.
+- L'archivage d'un client est refusé tant qu'un chantier associé n'est ni terminé ni annulé, y compris si ce chantier est archivé. L'archivage et la restauration d'un client ne modifient jamais l'archivage des chantiers.
+- Les clients et chantiers archivés restent consultables selon les permissions existantes mais ne peuvent plus être modifiés. La restauration d'un client ne restaure pas ses chantiers.
+- La suppression physique est refusée par les policies, aucune action Filament de suppression n'est exposée, l'événement Eloquent `deleting` lève une exception et la clé étrangère des chantiers est en `restrictOnDelete`.
+- L'e-mail client est obligatoire et validé côté serveur. Le téléphone est facultatif et validé par une règle tolérante aux formats français et internationaux courants.
+- La détection de doublons est informative et non bloquante. Elle s'exécute côté serveur, après `trim` et insensibilité à la casse, exclut le client courant et exige `clients.view` ; seules les raisons sociales des correspondances sont affichées. Aucune contrainte d'unicité n'est ajoutée en base.
+- Les adresses historiques ne sont pas découpées automatiquement ; les champs structurés sont validés pour toute nouvelle saisie.
+
 ## Données et audit
 - Minimiser les données personnelles et la visibilité des données d’absence.
 - Les responsables opérationnels voient la disponibilité, pas le détail médical.

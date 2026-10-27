@@ -15,6 +15,7 @@ Les tests automatisés utilisent une base MySQL dédiée et jetable, `planning_c
 - Permissions : matrice par rôle, accès direct et accès à des données hors périmètre.
 - Comptes : activation unique/expirée, réinitialisation, 2FA, expiration et révocation.
 - Salariés : périodes d’emploi, sortie/retour, historisation des équipes.
+- Clients et chantiers : validation des champs, doublons non bloquants, archivage conditionnel, permissions de restauration, matrice des statuts et réouverture motivée.
 - Planning : demi-journées, exclusions, chevauchements, archives, pas de préremplissage.
 - Heures : précision minute, passage minuit, chevauchement, segment incomplet, seuil 12 heures, raison pour journée vide.
 - Workflow : transitions admises/refusées, transmission idempotente, correction, validation, réouverture motivée, audit.
@@ -96,3 +97,64 @@ mécanisme de sérialisation ; ce n'est pas un test multi-processus.
 Résultats de référence du lot 3 après corrections d’audit et revue technique :
 118 tests, 635 assertions, Pint et Larastan verts. Les migrations ont été rejouées intégralement sur
 `planning_c2me_test`, puis annulées et réappliquées pour vérifier les deux sens.
+
+## Jeu de démonstration PC1-28 (27/10/2026)
+
+- `tests/Feature/ClientsAndSites/DemoDatasetTest.php` : création des 16 clients
+  et 40 chantiers, relations client-chantier, 6 chantiers archivés, 2 clients
+  sans chantier, absence de compte et d'événement d'audit, idempotence sans
+  doublon, préservation des données hors démonstration, refus sans `--confirm`,
+  refus en production, refus d'une base ou d'un hôte non autorisés, maintien des
+  permissions Filament existantes.
+- Les données sont créées directement par `DemoClientsAndSitesSeeder`, sans
+  passer par les services métier, afin de ne pas fabriquer de faux événements
+  d'audit. La procédure de revue est décrite dans
+  `docs/PC1-28-DEMO-REVIEW.md`.
+
+Résultats de référence : 148 tests, 1240 assertions, Pint et Larastan verts.
+
+## Couverture PC1-28 — décisions métier (27/10/2026)
+
+- `tests/Feature/ClientsAndSites/ClientAndSiteServiceTest.php` : validation
+  serveur des champs client et de l'e-mail, normalisation de l'e-mail, formats
+  de téléphone français et internationaux, contact facultatif, détection de
+  doublons non bloquante et exclusion du client courant, doublons par raison
+  sociale et par e-mail testés séparément, absence de sauvegarde et d'audit
+  lorsqu'une mise à jour ne change aucun attribut, statut initial imposé,
+  acceptation de chaque transition autorisée et refus de chaque transition
+  interdite, motif obligatoire pour annuler un chantier en cours, réouverture
+  protégée par `sites.reopen`, motif et cible de réouverture, audit des
+  transitions et réouvertures, archivage indépendant du statut, blocage des
+  opérations sur chantier archivé, archivage client conditionnel y compris avec
+  un chantier actif archivé, indépendance client/chantiers, restauration
+  réservée à `clients.restore`, refus de modification d'un client archivé,
+  refus de rattachement à un client archivé et refus de suppression physique
+  par policy et par événement Eloquent.
+- `tests/Feature/ClientsAndSites/ClientAndSitePanelTest.php` : pages de liste,
+  création, consultation et édition, pays `France` par défaut, alerte de doublon
+  non bloquante, visibilité et consultation d'un client archivé sans édition,
+  actions de changement de statut et de réouverture dans la liste, refus
+  d'archivage d'un client ayant un chantier actif, chantier archivé consultable
+  mais non modifiable, absence d'action de suppression.
+- `tests/Feature/ClientsAndSites/DemoDatasetTest.php` : champs structurés des
+  clients de démonstration, e-mails obligatoires, statuts du référentiel,
+  complétion des clients existants sans écraser les valeurs saisies.
+- `tests/Feature/ClientsAndSites/ClientSchemaMigrationTest.php` : schéma client
+  final sur une base MySQL neuve, unicité des colonnes, nullabilité de `address`,
+  index `archived_at`, puis mise à niveau d'une base au schéma initial avec
+  conservation de l'adresse, du téléphone, de l'e-mail et du statut historique.
+  Ces tests utilisent une base MySQL temporaire créée et supprimée pour
+  l'exécution.
+- `tests/Feature/Access/RolePermissionMatrixTest.php` : `clients.restore` et
+  `sites.reopen` accordées au seul rôle `bureau_direction`, avec un test
+  explicite documentant l'absence de rôle `direction` séparé.
+
+Les transitions et réouvertures sont testées au niveau service, pas seulement
+via Filament. Les tests Filament vérifient la visibilité et le branchement des
+actions ; les règles restent imposées par les services et les policies.
+
+Résultats de référence PC1-28 : 216 tests, 1571 assertions, 1 test ignoré
+(création de lien symbolique indisponible sous Windows), Pint et Larastan
+verts. Les migrations ont été rejouées dans les deux sens sur
+`planning_c2me_test` avec `php artisan migrate:refresh --force`, et les deux
+scénarios neuf/mise à niveau sont couverts sur des bases MySQL temporaires.
