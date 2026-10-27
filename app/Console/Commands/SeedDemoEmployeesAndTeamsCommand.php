@@ -1,10 +1,10 @@
 <?php
 
-namespace App\\Console\\Commands;
+namespace App\Console\Commands;
 
-use App\\Support\\DemoData\\DemoDatasetEnvironment;
-use Database\\Seeders\\DemoEmployeesAndTeamsSeeder;
-use Illuminate\\Console\\Command;
+use App\Support\DemoData\DemoDatasetEnvironment;
+use Database\Seeders\DemoEmployeesAndTeamsSeeder;
+use Illuminate\Console\Command;
 use Throwable;
 
 class SeedDemoEmployeesAndTeamsCommand extends Command
