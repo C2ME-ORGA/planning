@@ -5,6 +5,8 @@ namespace App\Providers;
 use App\Enums\Permission;
 use App\Listeners\AuditAuthenticationEvents;
 use App\Models\AuditEvent;
+use App\Models\Client;
+use App\Models\Site;
 use App\Models\Employee;
 use App\Models\EmploymentPeriod;
 use App\Models\PermissionException;
@@ -14,6 +16,8 @@ use App\Models\TeamLeadership;
 use App\Models\User;
 use App\Observers\UserObserver;
 use App\Policies\AuditEventPolicy;
+use App\Policies\ClientPolicy;
+use App\Policies\SitePolicy;
 use App\Policies\EmployeePolicy;
 use App\Policies\EmploymentPeriodPolicy;
 use App\Policies\PermissionExceptionPolicy;
@@ -47,6 +51,8 @@ class AccessServiceProvider extends ServiceProvider
 
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(AuditEvent::class, AuditEventPolicy::class);
+        Gate::policy(Client::class, ClientPolicy::class);
+        Gate::policy(Site::class, SitePolicy::class);
         Gate::policy(PermissionException::class, PermissionExceptionPolicy::class);
         Gate::policy(Employee::class, EmployeePolicy::class);
         Gate::policy(EmploymentPeriod::class, EmploymentPeriodPolicy::class);
