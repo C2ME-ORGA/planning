@@ -7,12 +7,15 @@ use App\Filament\Resources\Sites\Actions\SiteActions;
 use App\Filament\Resources\Sites\Pages\CreateSite;
 use App\Filament\Resources\Sites\Pages\EditSite;
 use App\Filament\Resources\Sites\Pages\ListSites;
+use App\Filament\Resources\Sites\Pages\ViewSite;
+use App\Filament\Resources\Sites\Schemas\SiteInfolist;
 use App\Filament\Support\ActionFeedback;
 use App\Models\Site;
 use App\Models\User;
 use App\Services\Sites\SiteService;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\ViewAction;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Notifications\Notification;
@@ -65,6 +68,11 @@ class SiteResource extends Resource
         ]);
     }
 
+    public static function infolist(Schema $schema): Schema
+    {
+        return SiteInfolist::configure($schema);
+    }
+
     public static function table(Table $table): Table
     {
         return $table->modifyQueryUsing(fn ($query) => $query->with('client'))
@@ -83,6 +91,7 @@ class SiteResource extends Resource
                     ->nullable()
                     ->trueLabel('Archivés')->falseLabel('Actifs'),
             ])->recordActions([
+                ViewAction::make()->label('Consulter'),
                 SiteActions::transition(),
                 SiteActions::reopen(),
                 Action::make('archive')->label('Archiver')->icon(Heroicon::OutlinedArchiveBox)
@@ -111,6 +120,7 @@ class SiteResource extends Resource
         return [
             'index' => ListSites::route('/'),
             'create' => CreateSite::route('/create'),
+            'view' => ViewSite::route('/{record}'),
             'edit' => EditSite::route('/{record}/edit'),
         ];
     }
