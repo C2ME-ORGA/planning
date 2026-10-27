@@ -16,6 +16,7 @@ class SiteService
 {
     public function __construct(private readonly AuditLogger $audit) {}
 
+    /** @param array<string, mixed> $data */
     public function create(array $data, User $actor): Site
     {
         Gate::forUser($actor)->authorize(Permission::SitesManage->value);
@@ -27,10 +28,12 @@ class SiteService
             $this->audit->record(AuditAction::SiteCreated, $site, [
                 'site_id' => $site->getKey(), 'client_id' => $site->client_id,
             ], null, $actor);
+
             return $site;
         });
     }
 
+    /** @param array<string, mixed> $data */
     public function update(Site $site, array $data, User $actor): Site
     {
         Gate::forUser($actor)->authorize(Permission::SitesManage->value);
@@ -44,12 +47,15 @@ class SiteService
             Client::query()->whereKey($data['client_id'])->firstOrFail();
             $changed = [];
             foreach (array_keys($data) as $key) {
-                if ($site->getAttribute($key) !== $data[$key]) $changed[] = $key;
+                if ($site->getAttribute($key) !== $data[$key]) {
+                    $changed[] = $key;
+                }
             }
             if ($changed !== []) {
                 $site->fill($data)->save();
                 $this->audit->record(AuditAction::SiteUpdated, $site, ['changed_fields' => $changed], null, $actor);
             }
+
             return $site;
         });
     }
@@ -63,13 +69,18 @@ class SiteService
             if (! $site->isArchived()) {
                 $site->forceFill(['archived_at' => now()])->save();
                 $this->audit->record(AuditAction::SiteArchived, $site, [
-                    'archived_at' => $site->archived_at?->toIso8601String(),
+                    'archived_at' => now()->toIso8601String(),
                 ], null, $actor);
             }
+
             return $site;
         });
     }
 
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
     private function validated(array $data): array
     {
         return validator($data, [

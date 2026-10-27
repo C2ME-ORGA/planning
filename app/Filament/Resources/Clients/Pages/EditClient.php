@@ -18,6 +18,7 @@ class EditClient extends EditRecord
         /** @var Client $record */
         /** @var User $actor */
         $actor = auth()->user();
+
         return app(ClientService::class)->update($record, $data, $actor);
     }
 }

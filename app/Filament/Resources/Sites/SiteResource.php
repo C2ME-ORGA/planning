@@ -6,6 +6,8 @@ use App\Filament\Resources\Sites\Pages\CreateSite;
 use App\Filament\Resources\Sites\Pages\EditSite;
 use App\Filament\Resources\Sites\Pages\ListSites;
 use App\Models\Site;
+use App\Models\User;
+use App\Services\Sites\SiteService;
 use BackedEnum;
 use Filament\Actions\Action;
 use Filament\Forms\Components\Select;
@@ -22,12 +24,19 @@ use UnitEnum;
 class SiteResource extends Resource
 {
     protected static ?string $model = Site::class;
+
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBuildingOffice;
+
     protected static string|UnitEnum|null $navigationGroup = 'Opérationnel';
+
     protected static ?string $navigationLabel = 'Chantiers';
+
     protected static ?string $modelLabel = 'chantier';
+
     protected static ?string $pluralModelLabel = 'chantiers';
+
     protected static ?string $recordTitleAttribute = 'name';
+
     protected static ?int $navigationSort = 20;
 
     public static function form(Schema $schema): Schema
@@ -60,9 +69,9 @@ class SiteResource extends Resource
                     ->requiresConfirmation()
                     ->visible(fn (Site $record): bool => ! $record->isArchived() && (auth()->user()?->can('archive', $record) ?? false))
                     ->action(function (Site $record): void {
-                        /** @var \App\Models\User $actor */
+                        /** @var User $actor */
                         $actor = auth()->user();
-                        app(\App\Services\Sites\SiteService::class)->archive($record, $actor);
+                        app(SiteService::class)->archive($record, $actor);
                     }),
                 Action::make('edit')->label('Modifier')->url(fn (Site $record): string => static::getUrl('edit', ['record' => $record]))
                     ->visible(fn (Site $record): bool => ! $record->isArchived() && (auth()->user()?->can('update', $record) ?? false)),

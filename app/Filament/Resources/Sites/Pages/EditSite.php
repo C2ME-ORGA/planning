@@ -18,6 +18,7 @@ class EditSite extends EditRecord
         /** @var Site $record */
         $record = $this->getRecord();
         abort_if($record->isArchived(), 403);
+
         return $data;
     }
 
@@ -26,6 +27,7 @@ class EditSite extends EditRecord
         /** @var Site $record */
         /** @var User $actor */
         $actor = auth()->user();
+
         return app(SiteService::class)->update($record, $data, $actor);
     }
 }

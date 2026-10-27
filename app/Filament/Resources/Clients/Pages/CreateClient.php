@@ -16,6 +16,7 @@ class CreateClient extends CreateRecord
     {
         /** @var User $actor */
         $actor = auth()->user();
+
         return app(ClientService::class)->create($data, $actor);
     }
 }

@@ -16,6 +16,7 @@ class CreateSite extends CreateRecord
     {
         /** @var User $actor */
         $actor = auth()->user();
+
         return app(SiteService::class)->create($data, $actor);
     }
 }

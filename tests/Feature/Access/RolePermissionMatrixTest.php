@@ -32,6 +32,10 @@ it('applies the approved role matrix on the server', function () {
             Permission::WorkflowCorrect,
             Permission::WorkflowReopen,
             Permission::AbsenceManage,
+            Permission::ClientsView,
+            Permission::ClientsManage,
+            Permission::SitesView,
+            Permission::SitesManage,
         ],
         Role::Conducteur->value => [
             Permission::PlanningPropose,

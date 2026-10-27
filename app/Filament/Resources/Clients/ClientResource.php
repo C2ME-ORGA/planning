@@ -19,12 +19,19 @@ use UnitEnum;
 class ClientResource extends Resource
 {
     protected static ?string $model = Client::class;
+
     protected static string|BackedEnum|null $navigationIcon = Heroicon::OutlinedBuildingOffice2;
+
     protected static string|UnitEnum|null $navigationGroup = 'Opérationnel';
+
     protected static ?string $navigationLabel = 'Clients';
+
     protected static ?string $modelLabel = 'client';
+
     protected static ?string $pluralModelLabel = 'clients';
+
     protected static ?string $recordTitleAttribute = 'company_name';
+
     protected static ?int $navigationSort = 10;
 
     public static function form(Schema $schema): Schema
