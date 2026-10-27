@@ -67,9 +67,10 @@ class SiteService
         return DB::transaction(function () use ($site, $actor): Site {
             $site = Site::query()->whereKey($site->getKey())->lockForUpdate()->firstOrFail();
             if (! $site->isArchived()) {
-                $site->forceFill(['archived_at' => now()])->save();
+                $archivedAt = now();
+                $site->forceFill(['archived_at' => $archivedAt])->save();
                 $this->audit->record(AuditAction::SiteArchived, $site, [
-                    'archived_at' => now()->toIso8601String(),
+                    'archived_at' => $archivedAt->toIso8601String(),
                 ], null, $actor);
             }
 

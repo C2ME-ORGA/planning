@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\AuditAction;
 use App\Models\Site;
 use App\Models\User;
 use App\Services\Clients\ClientService;
@@ -41,8 +42,20 @@ it('creates and updates a client with audited changes', function (): void {
     $client = $service->create(clientData(), $bureau);
     expect($client->company_name)->toBe('C2ME Client Test');
 
+    $this->assertDatabaseHas('audit_events', [
+        'action' => AuditAction::ClientCreated->value,
+        'subject_id' => (string) $client->id,
+        'actor_id' => $bureau->id,
+    ]);
+
     $service->update($client, clientData(['phone' => '0251000000']), $bureau);
     expect($client->fresh()->phone)->toBe('0251000000');
+
+    $this->assertDatabaseHas('audit_events', [
+        'action' => AuditAction::ClientUpdated->value,
+        'subject_id' => (string) $client->id,
+        'actor_id' => $bureau->id,
+    ]);
 });
 
 it('requires server-side permission to manage clients', function (): void {
@@ -52,6 +65,20 @@ it('requires server-side permission to manage clients', function (): void {
         ->toThrow(AuthorizationException::class);
 });
 
+it('refuses an unauthorized client update without changing the data', function (): void {
+    $bureau = User::factory()->bureauDirection()->create();
+    $worker = User::factory()->ouvrier()->create();
+    $client = app(ClientService::class)->create(clientData(), $bureau);
+
+    expect(fn () => app(ClientService::class)->update(
+        $client,
+        clientData(['company_name' => 'Modification interdite']),
+        $worker,
+    ))->toThrow(AuthorizationException::class);
+
+    expect($client->fresh()->company_name)->toBe('C2ME Client Test');
+});
+
 it('requires the selected client and validates required site fields', function (): void {
     $bureau = User::factory()->bureauDirection()->create();
     $service = app(SiteService::class);
@@ -59,6 +86,22 @@ it('requires the selected client and validates required site fields', function (
 
     expect(fn () => $service->create(siteData($client->id, ['name' => '']), $bureau))
         ->toThrow(ValidationException::class);
+});
+
+it('updates an active site and records the audit trail', function (): void {
+    $bureau = User::factory()->bureauDirection()->create();
+    $client = app(ClientService::class)->create(clientData(), $bureau);
+    $site = app(SiteService::class)->create(siteData($client->id), $bureau);
+
+    app(SiteService::class)->update($site, siteData($client->id, ['name' => 'Chantier modifié']), $bureau);
+
+    expect($site->fresh()->name)->toBe('Chantier modifié');
+
+    $this->assertDatabaseHas('audit_events', [
+        'action' => AuditAction::SiteUpdated->value,
+        'subject_id' => (string) $site->id,
+        'actor_id' => $bureau->id,
+    ]);
 });
 
 it('archives a site without deleting it or breaking its client relationship', function (): void {
@@ -71,9 +114,15 @@ it('archives a site without deleting it or breaking its client relationship', fu
     expect($site->fresh()->isArchived())->toBeTrue()
         ->and($site->fresh()->client->is($client))->toBeTrue()
         ->and(Site::query()->whereKey($site->id)->exists())->toBeTrue();
+
+    $this->assertDatabaseHas('audit_events', [
+        'action' => AuditAction::SiteArchived->value,
+        'subject_id' => (string) $site->id,
+        'actor_id' => $bureau->id,
+    ]);
 });
 
-it('refuses updates to archived sites', function (): void {
+it('refuses updates to archived sites without changing the data', function (): void {
     $bureau = User::factory()->bureauDirection()->create();
     $client = app(ClientService::class)->create(clientData(), $bureau);
     $site = app(SiteService::class)->create(siteData($client->id), $bureau);
@@ -81,6 +130,8 @@ it('refuses updates to archived sites', function (): void {
 
     expect(fn () => app(SiteService::class)->update($site, siteData($client->id, ['name' => 'Changement']), $bureau))
         ->toThrow(ValidationException::class);
+
+    expect($site->fresh()->name)->toBe('Chantier Test');
 });
 
 it('does not grant client or site management to the technical administrator', function (): void {
@@ -88,4 +139,15 @@ it('does not grant client or site management to the technical administrator', fu
 
     expect(fn () => app(ClientService::class)->create(clientData(), $admin))
         ->toThrow(AuthorizationException::class);
+});
+
+it('denies physical deletion of clients and sites', function (): void {
+    $bureau = User::factory()->bureauDirection()->create();
+    $client = app(ClientService::class)->create(clientData(), $bureau);
+    $site = app(SiteService::class)->create(siteData($client->id), $bureau);
+
+    expect($bureau->can('delete', $client))->toBeFalse()
+        ->and($bureau->can('delete', $site))->toBeFalse()
+        ->and($bureau->can('deleteAny', $client))->toBeFalse()
+        ->and($bureau->can('deleteAny', $site))->toBeFalse();
 });

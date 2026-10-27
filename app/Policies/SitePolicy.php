@@ -25,7 +25,7 @@ class SitePolicy
 
     public function update(User $actor, Site $site): bool
     {
-        return $actor->hasPermission(Permission::SitesManage);
+        return $actor->hasPermission(Permission::SitesManage) && ! $site->isArchived();
     }
 
     public function archive(User $actor, Site $site): bool

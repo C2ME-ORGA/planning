@@ -7,6 +7,7 @@ use App\Filament\Resources\Clients\Pages\EditClient;
 use App\Filament\Resources\Clients\Pages\ListClients;
 use App\Models\Client;
 use BackedEnum;
+use Filament\Actions\Action;
 use Filament\Forms\Components\TextInput;
 use Filament\Resources\Resource;
 use Filament\Schemas\Components\Section;
@@ -54,6 +55,11 @@ class ClientResource extends Resource
             TextColumn::make('phone')->label('Téléphone'),
             TextColumn::make('email')->label('E-mail')->searchable(),
             TextColumn::make('sites_count')->counts('sites')->label('Chantiers'),
+        ])->recordActions([
+            Action::make('edit')
+                ->label('Modifier')
+                ->url(fn (Client $record): string => static::getUrl('edit', ['record' => $record]))
+                ->visible(fn (Client $record): bool => auth()->user()?->can('update', $record) ?? false),
         ]);
     }
 
