@@ -84,6 +84,25 @@ it('creates and updates a client with audited changes', function (): void {
     ]);
 });
 
+it('does not save or audit a client update when nothing changed', function (): void {
+    $bureau = User::factory()->bureauDirection()->create();
+    $service = app(ClientService::class);
+    $client = $service->create(clientData(), $bureau);
+    $updatedAt = $client->fresh()->updated_at;
+
+    $this->travel(2)->seconds();
+
+    $service->update($client, clientData(), $bureau);
+
+    expect($client->fresh()->updated_at->equalTo($updatedAt))->toBeTrue()
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::ClientUpdated->value)
+            ->where('subject_id', (string) $client->id)
+            ->count())->toBe(0);
+
+    $this->travelBack();
+});
+
 it('requires server-side permission to manage clients', function (): void {
     $worker = User::factory()->ouvrier()->create();
 
@@ -204,6 +223,41 @@ it('flags potential duplicates without blocking creation and excludes the curren
     ]), $bureau);
 
     expect($service->duplicatesFor($second->fresh(), $bureau))->toBeEmpty();
+});
+
+it('detects a duplicate by company name even when the email differs', function (): void {
+    $bureau = User::factory()->bureauDirection()->create();
+    $service = app(ClientService::class);
+
+    $first = $service->create(clientData([
+        'company_name' => 'Entreprise Dupliquée',
+        'email' => 'premier@example.test',
+    ]), $bureau);
+
+    $second = $service->create(clientData([
+        'company_name' => '  entreprise dupliquée  ',
+        'email' => 'second@example.test',
+    ]), $bureau);
+
+    expect($service->duplicatesFor($second, $bureau)->pluck('id')->all())->toBe([$first->id]);
+});
+
+it('detects a duplicate by email even when the company name differs', function (): void {
+    $bureau = User::factory()->bureauDirection()->create();
+    $service = app(ClientService::class);
+
+    $first = $service->create(clientData([
+        'company_name' => 'Première Société',
+        'email' => 'partage@example.test',
+    ]), $bureau);
+
+    $second = $service->create(clientData([
+        'company_name' => 'Deuxième Société',
+        'email' => '  PARTAGE@EXAMPLE.TEST  ',
+    ]), $bureau);
+
+    expect($service->duplicatesFor($second, $bureau)->pluck('id')->all())->toBe([$first->id])
+        ->and($second->fresh()->email)->toBe('partage@example.test');
 });
 
 it('requires client view permission to inspect potential duplicates', function (): void {
@@ -422,6 +476,25 @@ it('updates an active site and records the audit trail', function (): void {
         'subject_id' => (string) $site->id,
         'actor_id' => $bureau->id,
     ]);
+});
+
+it('does not save or audit a site update when nothing changed', function (): void {
+    $bureau = User::factory()->bureauDirection()->create();
+    $client = app(ClientService::class)->create(clientData(), $bureau);
+    $site = app(SiteService::class)->create(siteData($client->id), $bureau);
+    $updatedAt = $site->fresh()->updated_at;
+
+    $this->travel(2)->seconds();
+
+    app(SiteService::class)->update($site, siteData($client->id), $bureau);
+
+    expect($site->fresh()->updated_at->equalTo($updatedAt))->toBeTrue()
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::SiteUpdated->value)
+            ->where('subject_id', (string) $site->id)
+            ->count())->toBe(0);
+
+    $this->travelBack();
 });
 
 it('archives a site without changing its status, deleting it or breaking its client relationship', function (): void {

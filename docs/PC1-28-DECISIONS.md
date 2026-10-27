@@ -112,6 +112,16 @@ La permission dédiée `clients.restore` est attribuée exclusivement au rôle
 - ne restaure que le client, jamais ses chantiers ;
 - produit l'événement `client.restored` avec l'auteur et la date.
 
+**Écart documenté :** le référentiel ne contient qu'un rôle combiné
+`bureau_direction` (« Bureau / Direction ») ; il n'existe pas de rôle `direction`
+séparé ni de rôle `bureau` distinct. La revue demande que la restauration soit
+réservée à « Direction » et refusée au « Bureau ». Cette séparation ne peut pas
+être garantie avec le référentiel actuel. L'arbitrage retenu pour ce lot est de
+conserver `clients.restore` sur le rôle combiné, sans inventer de rôle ni de
+drapeau de compte. Un test de matrice explicite documente ce comportement. Une
+séparation ultérieure des rôles devra faire l'objet d'une décision et d'une
+migration dédiées.
+
 ### Suppression définitive
 
 La suppression physique d'un client est interdite dans toutes les voies prises
@@ -161,6 +171,22 @@ privilégie les champs structurés lorsqu'ils existent, sinon l'ancienne valeur.
 - Lors d'une modification, le client courant est exclu.
 - La détection s'exécute côté serveur et exige `clients.view` ; seules les
   raisons sociales des correspondances sont affichées.
+- Les tests couvrent séparément un doublon par raison sociale et un doublon par
+  e-mail, y compris avec des espaces et une casse différents.
+
+### Performance de la recherche de doublons
+
+Le moteur cible est MySQL 8. La requête utilise `LOWER(TRIM(...))` sur
+`company_name` et `email`. Aucun index ordinaire ne peut servir cette expression :
+la recherche effectue donc un balayage de la table `clients`. Le portefeuille
+client actuel est de faible volume et la détection n'intervient qu'après une
+création ou une modification, ce qui ne justifie pas d'optimisation prématurée.
+
+Aucun index fonctionnel, colonne générée ou colonne normalisée n'est ajouté dans
+ce lot. Si le volume augmente, la solution à évaluer est une colonne normalisée
+maintenue à l'écriture (ou une colonne générée MySQL) avec un index, en
+conservant la comparaison insensible à la casse et aux espaces. Cette limite est
+également signalée dans le code de `ClientService::findDuplicates()`.
 
 ## 4. Permissions et audit
 
@@ -177,7 +203,32 @@ Actions d'audit ajoutées :
 - `client.archived`, `client.restored` ;
 - `site.status_changed`, `site.reopened`.
 
-## 5. Fichiers de référence
+## 5. Migrations et compatibilité
+
+La migration initiale `2026_10_27_000001_create_clients_table.php` n'est pas
+modifiée : elle crée le schéma historique minimal (`company_name`, `address`,
+`phone`, `email`, timestamps). Les colonnes d'adresse structurée et les champs
+métier sont ajoutés une seule fois par
+`2026_10_27_000003_add_client_business_fields.php`. Il n'y a donc pas de colonne
+dupliquée ni de double ajout.
+
+La migration `000003` rend `address` nullable pour les nouveaux clients
+structurés, sans réécrire les valeurs historiques. La migration `000004`
+normalise uniquement les libellés de statut connus et laisse les valeurs
+inconnues intactes.
+
+Deux tests d'intégration MySQL isolés vérifient :
+
+- le schéma final sur une base neuve, l'unicité des colonnes, la nullabilité de
+  `address` et l'index `archived_at` ;
+- une mise à niveau depuis le schéma initial : les données historiques du client
+  et du chantier sont conservées, les nouveaux champs restent nuls et le statut
+  historique `en cours` est normalisé en `en_cours`.
+
+Ces tests utilisent une base temporaire créée et supprimée pour l'exécution,
+sur le même moteur MySQL que la suite de tests.
+
+## 6. Fichiers de référence
 
 - Référentiel et matrice : `app/Enums/SiteStatus.php`.
 - Règles clients : `app/Services/Clients/ClientService.php`.
@@ -188,13 +239,16 @@ Actions d'audit ajoutées :
   `2026_10_27_000004_normalize_site_statuses.php`.
 - Tests : `tests/Feature/ClientsAndSites`.
 
-## 6. Limites connues
+## 7. Limites connues
 
 - L'archivage des chantiers n'est pas réversible depuis l'interface ; aucune
   décision de restauration de chantier n'a été prise.
 - Les adresses historiques restent dans leur champ libre jusqu'à une saisie
   manuelle des champs structurés ; aucune reprise automatique n'est faite.
-- La détection de doublons est informative et limitée à dix correspondances.
+- La détection de doublons est informative et limitée à dix correspondances ;
+  elle effectue un balayage complet en l'absence d'index normalisé.
+- Le rôle `bureau_direction` reste combiné : la restriction de restauration au
+  seul « Direction » n'est pas applicable sans séparation des rôles.
 - Aucun calcul de paie, majoration, virement ou retenue n'est introduit.
 
 Aucun déploiement n'est effectué par ce lot.

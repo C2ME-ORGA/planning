@@ -118,7 +118,9 @@ Résultats de référence : 148 tests, 1240 assertions, Pint et Larastan verts.
 - `tests/Feature/ClientsAndSites/ClientAndSiteServiceTest.php` : validation
   serveur des champs client et de l'e-mail, normalisation de l'e-mail, formats
   de téléphone français et internationaux, contact facultatif, détection de
-  doublons non bloquante et exclusion du client courant, statut initial imposé,
+  doublons non bloquante et exclusion du client courant, doublons par raison
+  sociale et par e-mail testés séparément, absence de sauvegarde et d'audit
+  lorsqu'une mise à jour ne change aucun attribut, statut initial imposé,
   acceptation de chaque transition autorisée et refus de chaque transition
   interdite, motif obligatoire pour annuler un chantier en cours, réouverture
   protégée par `sites.reopen`, motif et cible de réouverture, audit des
@@ -137,14 +139,22 @@ Résultats de référence : 148 tests, 1240 assertions, Pint et Larastan verts.
 - `tests/Feature/ClientsAndSites/DemoDatasetTest.php` : champs structurés des
   clients de démonstration, e-mails obligatoires, statuts du référentiel,
   complétion des clients existants sans écraser les valeurs saisies.
+- `tests/Feature/ClientsAndSites/ClientSchemaMigrationTest.php` : schéma client
+  final sur une base MySQL neuve, unicité des colonnes, nullabilité de `address`,
+  index `archived_at`, puis mise à niveau d'une base au schéma initial avec
+  conservation de l'adresse, du téléphone, de l'e-mail et du statut historique.
+  Ces tests utilisent une base MySQL temporaire créée et supprimée pour
+  l'exécution.
 - `tests/Feature/Access/RolePermissionMatrixTest.php` : `clients.restore` et
-  `sites.reopen` accordées au seul rôle `bureau_direction`.
+  `sites.reopen` accordées au seul rôle `bureau_direction`, avec un test
+  explicite documentant l'absence de rôle `direction` séparé.
 
 Les transitions et réouvertures sont testées au niveau service, pas seulement
 via Filament. Les tests Filament vérifient la visibilité et le branchement des
 actions ; les règles restent imposées par les services et les policies.
 
-Résultats de référence PC1-28 : 209 tests, 1529 assertions, 1 test ignoré
+Résultats de référence PC1-28 : 216 tests, 1571 assertions, 1 test ignoré
 (création de lien symbolique indisponible sous Windows), Pint et Larastan
 verts. Les migrations ont été rejouées dans les deux sens sur
-`planning_c2me_test` avec `php artisan migrate:refresh --force`.
+`planning_c2me_test` avec `php artisan migrate:refresh --force`, et les deux
+scénarios neuf/mise à niveau sont couverts sur des bases MySQL temporaires.

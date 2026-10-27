@@ -29,6 +29,7 @@
 
 ## Clients et chantiers (PC1-28)
 - `clients.view`, `clients.manage`, `sites.view` et `sites.manage` sont réservées au Bureau/Direction. La restauration d'un client exige `clients.restore` et la réouverture d'un chantier exige `sites.reopen`, permissions distinctes accordées au seul rôle `bureau_direction` et non éligibles aux exceptions temporaires.
+- Le référentiel ne distingue pas un rôle « Bureau » d'un rôle « Direction » : `bureau_direction` est un rôle combiné. La restriction de `clients.restore` au seul « Direction » ne peut donc pas être garantie sans séparation préalable des rôles ; cet écart est documenté dans `docs/PC1-28-DECISIONS.md` et couvert par un test de matrice explicite.
 - Les transitions de statut sont imposées par `SiteService` selon la matrice `SiteStatus`, y compris pour un appel direct hors interface. Aucun statut libre n'est accepté. L'annulation depuis `En cours` et toute réouverture exigent un motif non vide.
 - L'archivage d'un client est refusé tant qu'un chantier associé n'est ni terminé ni annulé, y compris si ce chantier est archivé. L'archivage et la restauration d'un client ne modifient jamais l'archivage des chantiers.
 - Les clients et chantiers archivés restent consultables selon les permissions existantes mais ne peuvent plus être modifiés. La restauration d'un client ne restaure pas ses chantiers.

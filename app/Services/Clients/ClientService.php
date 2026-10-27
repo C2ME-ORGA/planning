@@ -48,14 +48,11 @@ class ClientService
                 ]);
             }
 
-            $changed = [];
-            foreach (array_keys($data) as $key) {
-                if ($client->getAttribute($key) !== $data[$key]) {
-                    $changed[] = $key;
-                }
-            }
+            $client->fill($data);
+            $changed = array_keys($client->getDirty());
+
             if ($changed !== []) {
-                $client->fill($data)->save();
+                $client->save();
                 $this->audit->record(AuditAction::ClientUpdated, $client, ['changed_fields' => $changed], null, $actor);
             }
 
@@ -154,6 +151,11 @@ class ClientService
             $query->whereKeyNot($exceptClientId);
         }
 
+        // MySQL 8 ne peut pas utiliser un index ordinaire sur LOWER(TRIM(...)) :
+        // la recherche reste un balayage complet. Le volume actuel du portefeuille
+        // client ne justifie pas de colonnes normalisées ou d'index fonctionnels
+        // supplémentaires. Cette limite est documentée dans
+        // docs/PC1-28-DECISIONS.md ; elle devra être revue si le volume croît.
         $query->where(function (Builder $query) use ($companyName, $email): void {
             if ($companyName !== '') {
                 $query->whereRaw('LOWER(TRIM(company_name)) = ?', [$companyName]);

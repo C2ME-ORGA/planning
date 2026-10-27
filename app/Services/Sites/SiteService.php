@@ -57,14 +57,11 @@ class SiteService
 
             $this->lockAvailableClient((int) $data['client_id']);
 
-            $changed = [];
-            foreach (array_keys($data) as $key) {
-                if ($site->getAttribute($key) !== $data[$key]) {
-                    $changed[] = $key;
-                }
-            }
+            $site->fill($data);
+            $changed = array_keys($site->getDirty());
+
             if ($changed !== []) {
-                $site->fill($data)->save();
+                $site->save();
                 $this->audit->record(AuditAction::SiteUpdated, $site, ['changed_fields' => $changed], null, $actor);
             }
 
