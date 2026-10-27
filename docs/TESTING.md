@@ -158,3 +158,40 @@ Résultats de référence PC1-28 : 216 tests, 1571 assertions, 1 test ignoré
 verts. Les migrations ont été rejouées dans les deux sens sur
 `planning_c2me_test` avec `php artisan migrate:refresh --force`, et les deux
 scénarios neuf/mise à niveau sont couverts sur des bases MySQL temporaires.
+
+## Couverture PC1-29 — planning à la demi-journée
+
+- `tests/Feature/Planning/PlanningAssignmentServiceTest.php` : création d'une
+  affectation chantier/équipe/date/demi-journée, refus des dates invalides, des
+  chantiers archivés, des exclusions non membres et des doublons stricts,
+  exclusions valides et dédupliquées, composition limitée aux périodes d'emploi,
+  préservation de l'équipe principale et d'une affectation temporaire,
+  chevauchement d'équipe et de salarié averti sans
+  blocage ni modification de l'existant, résolution d'un conflit salarié par
+  exclusion, séparation matin/après-midi et dates adjacentes, modification
+  auditée, autorisations positives et négatives, rollback complet si l'audit
+  échoue, refus de suppression physique, et contrôle de non-régression du nombre
+  de requêtes lors de la détection de chevauchements multi-équipes.
+- `tests/Feature/Planning/PlanningAssignmentPanelTest.php` : écrans Filament
+  réservés au Bureau/Direction, refus à l'Administrateur, création et
+  modification via Livewire, références inexistantes refusées, avertissement de
+  chevauchement affiché après création et depuis l'action de vérification,
+  exclusions rechargées dans le formulaire de modification.
+- `tests/Support/PlanningFixtures.php` : fixtures de chantier, d'équipe et de
+  salarié membre pour les tests de planning.
+
+Commandes et résultats réels :
+
+```powershell
+php artisan test tests/Feature/Planning
+```
+**22 tests, 22 réussis, 116 assertions.**
+
+```powershell
+php artisan test
+```
+**241 tests, 240 réussis, 1 ignoré, 1710 assertions.** Le test ignoré est le
+test de lien symbolique SQLite déjà présent, indisponible sous Windows.
+
+Pint et Larastan sont verts. Aucun fichier frontend n'a été modifié : aucune
+compilation d'assets n'était nécessaire.

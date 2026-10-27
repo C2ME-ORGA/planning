@@ -147,6 +147,18 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     `team.*`, `team_assignment.*`, `team_leader.*` dans le journal existant.
     Les noms de salariés ne sont pas recopiés dans les modifications d'audit ;
     les identifiants, dates, équipes et natures suffisent.
+-   **Planning chantier (PC1-29)** : `planning_assignments` référence un
+    chantier, une équipe, une date civile et une demi-journée
+    (`App\Enums\PlanningHalfDay`). Les membres de l'équipe ne sont pas
+    recopiés : `PlanningRoster` les déduit des `team_assignments` actives à la
+    date, principales ou temporaires. Les exclusions individuelles sont dans
+    `planning_assignment_exclusions` et ne créent ni absence ni temps réel.
+    `PlanningAssignmentService` centralise la validation, les exclusions, les
+    chevauchements d'équipe ou de salarié et l'audit transactionnel. Les
+    chevauchements sont des avertissements non bloquants conservés dans le
+    contexte d'audit ; aucune affectation existante n'est déplacée. La
+    suppression physique est refusée ; l'historique complet reste à définir
+    dans PC1-30.
 
 Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
 examiner sa compatibilité et justifier le changement. Les versions

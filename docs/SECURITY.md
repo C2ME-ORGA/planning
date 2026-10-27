@@ -38,6 +38,14 @@
 - La détection de doublons est informative et non bloquante. Elle s'exécute côté serveur, après `trim` et insensibilité à la casse, exclut le client courant et exige `clients.view` ; seules les raisons sociales des correspondances sont affichées. Aucune contrainte d'unicité n'est ajoutée en base.
 - Les adresses historiques ne sont pas découpées automatiquement ; les champs structurés sont validés pour toute nouvelle saisie.
 
+## Planning chantier (PC1-29)
+- `planning.manage` est nécessaire pour créer ou modifier une affectation de planning ; `planning.propose` permet uniquement la consultation. L'Administrateur technique et l'Ouvrier n'ont aucun accès. Les policies et le service revérifient l'autorisation côté serveur, y compris la consultation du chantier et de l'équipe soumis.
+- Une affectation référence explicitement un chantier, une équipe, une date civile et une demi-journée (`morning`/`afternoon`). Un chantier archivé est refusé.
+- Les exclusions individuelles sont limitées aux salariés réellement membres de l'équipe à la date planifiée. Elles ne créent ni absence, ni temps réel, ni modification des affectations d'équipe historisées.
+- Les chevauchements d'équipe ou de salarié sont des avertissements non bloquants, tracés dans le contexte de l'audit. Aucune affectation existante n'est déplacée, remplacée ou supprimée automatiquement.
+- La suppression physique d'une affectation est refusée par la policy et par l'événement Eloquent ; l'historique complet reste à définir dans PC1-30.
+- Le planning n'est jamais utilisé pour préremplir les heures réelles.
+
 ## Données et audit
 - Minimiser les données personnelles et la visibilité des données d’absence.
 - Les responsables opérationnels voient la disponibilité, pas le détail médical.
