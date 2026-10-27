@@ -4,7 +4,6 @@ namespace Database\Seeders;
 
 use App\Enums\TeamAssignmentKind;
 use App\Models\Employee;
-use App\Models\EmploymentPeriod;
 use App\Models\Team;
 use App\Models\TeamAssignment;
 use App\Support\DemoData\DemoDatasetEnvironment;
@@ -28,18 +27,32 @@ class DemoEmployeesAndTeamsSeeder extends Seeder
     public const MARKER = '(démo PC1-53)';
 
     public int $employeesCreated = 0;
+
     public int $employeesExisting = 0;
+
     public int $periodsCreated = 0;
+
     public int $periodsExisting = 0;
+
     public int $teamsCreated = 0;
+
     public int $teamsExisting = 0;
+
     public int $assignmentsCreated = 0;
+
     public int $assignmentsExisting = 0;
 
     public function __construct(private readonly DemoDatasetEnvironment $environment) {}
 
-    public static function employeeCount(): int { return count(self::employees()); }
-    public static function teamCount(): int { return count(self::teams()); }
+    public static function employeeCount(): int
+    {
+        return count(self::employees());
+    }
+
+    public static function teamCount(): int
+    {
+        return count(self::teams());
+    }
 
     public function run(): void
     {
