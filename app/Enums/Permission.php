@@ -29,6 +29,12 @@ enum Permission: string
     case TeamsView = 'teams.view';
     case TeamsManage = 'teams.manage';
 
+    // Clients et chantiers (lot 4).
+    case ClientsView = 'clients.view';
+    case ClientsManage = 'clients.manage';
+    case SitesView = 'sites.view';
+    case SitesManage = 'sites.manage';
+
     // Capacités métier (appliquées par les lots ultérieurs).
     case PlanningPropose = 'planning.propose';
     case PlanningManage = 'planning.manage';
@@ -57,6 +63,10 @@ enum Permission: string
             self::EmployeesManage => 'Gérer les salariés et leurs périodes d’emploi',
             self::TeamsView => 'Consulter les équipes et leurs historiques',
             self::TeamsManage => 'Gérer les équipes, affectations et responsables',
+            self::ClientsView => 'Consulter les clients',
+            self::ClientsManage => 'Gérer les clients',
+            self::SitesView => 'Consulter les chantiers',
+            self::SitesManage => 'Gérer les chantiers',
             self::PlanningPropose => 'Proposer une modification de planning',
             self::PlanningManage => 'Modifier le planning',
             self::TimesheetOwn => 'Gérer ses propres relevés',
