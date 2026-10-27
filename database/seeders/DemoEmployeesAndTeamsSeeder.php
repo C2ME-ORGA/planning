@@ -67,8 +67,8 @@ class DemoEmployeesAndTeamsSeeder extends Seeder
                 foreach ($entry['periods'] as $period) {
                     $start = $today->addDays($period['start_offset'])->toDateString();
                     $end = $period['end_offset'] === null ? null : $today->addDays($period['end_offset'])->toDateString();
-                    $record = EmploymentPeriod::query()->firstOrCreate(
-                        ['employee_id' => $employee->getKey(), 'start_date' => $start],
+                    $record = $employee->employmentPeriods()->firstOrCreate(
+                        ['start_date' => $start],
                         ['end_date' => $end],
                     );
                     $record->wasRecentlyCreated ? $this->periodsCreated++ : $this->periodsExisting++;
