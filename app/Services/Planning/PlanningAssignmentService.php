@@ -213,10 +213,6 @@ class PlanningAssignmentService
      */
     private function detectWarnings(PlanningAssignment $assignment): array
     {
-        $members = $this->roster->members($assignment->team, $assignment->work_date)->keyBy('id');
-        $excludedIds = $assignment->exclusions->pluck('employee_id')->map(static fn (mixed $id): int => (int) $id);
-        $memberIds = $members->keys()->map(static fn (mixed $id): int => (int) $id)->diff($excludedIds)->values();
-
         $others = PlanningAssignment::query()
             ->whereKeyNot($assignment->getKey())
             ->where('work_date', $assignment->work_date->toDateString())
@@ -224,6 +220,18 @@ class PlanningAssignmentService
             ->with(['site', 'team', 'exclusions'])
             ->orderBy('id')
             ->get();
+
+        $teamIds = $others->pluck('team_id')
+            ->push($assignment->team_id)
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        $membersByTeam = $this->roster->membersByTeam($teamIds, $assignment->work_date);
+        $members = ($membersByTeam[(int) $assignment->team_id] ?? collect())->keyBy('id');
+        $excludedIds = $assignment->exclusions->pluck('employee_id')->map(static fn (mixed $id): int => (int) $id);
+        $memberIds = $members->keys()->map(static fn (mixed $id): int => (int) $id)->diff($excludedIds)->values();
 
         $warnings = [];
 
@@ -248,7 +256,7 @@ class PlanningAssignmentService
                 ];
             }
 
-            $otherMembers = $this->roster->members($other->team, $assignment->work_date)->keyBy('id');
+            $otherMembers = ($membersByTeam[(int) $other->team_id] ?? collect())->keyBy('id');
             $otherExcludedIds = $other->exclusions->pluck('employee_id')->map(static fn (mixed $id): int => (int) $id);
             $otherMemberIds = $otherMembers->keys()
                 ->map(static fn (mixed $id): int => (int) $id)

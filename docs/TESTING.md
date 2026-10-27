@@ -170,7 +170,8 @@ scénarios neuf/mise à niveau sont couverts sur des bases MySQL temporaires.
   blocage ni modification de l'existant, résolution d'un conflit salarié par
   exclusion, séparation matin/après-midi et dates adjacentes, modification
   auditée, autorisations positives et négatives, rollback complet si l'audit
-  échoue, refus de suppression physique.
+  échoue, refus de suppression physique, et contrôle de non-régression du nombre
+  de requêtes lors de la détection de chevauchements multi-équipes.
 - `tests/Feature/Planning/PlanningAssignmentPanelTest.php` : écrans Filament
   réservés au Bureau/Direction, refus à l'Administrateur, création et
   modification via Livewire, références inexistantes refusées, avertissement de
@@ -184,12 +185,12 @@ Commandes et résultats réels :
 ```powershell
 php artisan test tests/Feature/Planning
 ```
-**21 tests, 21 réussis, 113 assertions.**
+**22 tests, 22 réussis, 116 assertions.**
 
 ```powershell
 php artisan test
 ```
-**240 tests, 239 réussis, 1 ignoré, 1707 assertions.** Le test ignoré est le
+**241 tests, 240 réussis, 1 ignoré, 1710 assertions.** Le test ignoré est le
 test de lien symbolique SQLite déjà présent, indisponible sous Windows.
 
 Pint et Larastan sont verts. Aucun fichier frontend n'a été modifié : aucune

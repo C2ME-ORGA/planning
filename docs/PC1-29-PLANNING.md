@@ -72,6 +72,12 @@ Règles appliquées :
 - une action « Vérifier les chevauchements » permet de recalculer et d'afficher
   les conflits d'une affectation existante.
 
+Les membres des équipes concernées par un créneau sont chargés en une seule
+requête groupée (`PlanningRoster::membersByTeam`) : le nombre de requêtes de
+détection ne dépend pas du nombre d'affectations concurrentes. Le filtrage par
+date, par affectation principale ou temporaire et par période d'emploi reste
+identique à celui de la composition unitaire.
+
 Un doublon strict (même chantier, même équipe, même date, même demi-journée) est
 refusé : ce n'est pas un conflit de planification mais une ligne redondante. Le
 service renvoie un message explicite et une contrainte unique en base protège

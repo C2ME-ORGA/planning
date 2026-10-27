@@ -25,11 +25,38 @@ class PlanningRoster
      */
     public function members(Team $team, CarbonImmutable $date): Collection
     {
-        $day = $date->toDateString();
+        $teamId = (int) $team->getKey();
 
-        return Employee::query()
-            ->whereHas('teamAssignments', function (Builder $query) use ($team, $day): void {
-                $query->where('team_id', $team->getKey())
+        return $this->membersByTeam([$teamId], $date)[$teamId] ?? collect();
+    }
+
+    /**
+     * Charge en une fois les membres de plusieurs équipes à une même date.
+     *
+     * Les affectations d'équipe et les périodes d'emploi sont filtrées par les
+     * mêmes règles temporelles que `members()`. Le regroupement par équipe est
+     * fait en mémoire : le nombre de requêtes ne dépend pas du nombre d'équipes.
+     *
+     * @param  array<int, int>  $teamIds
+     * @return array<int, Collection<int, Employee>>
+     */
+    public function membersByTeam(array $teamIds, CarbonImmutable $date): array
+    {
+        $teamIds = array_values(array_unique(array_map(
+            static fn (mixed $id): int => (int) $id,
+            $teamIds,
+        )));
+
+        if ($teamIds === []) {
+            return [];
+        }
+
+        $day = $date->toDateString();
+        $grouped = array_fill_keys($teamIds, []);
+
+        $employees = Employee::query()
+            ->whereHas('teamAssignments', function (Builder $query) use ($teamIds, $day): void {
+                $query->whereIn('team_id', $teamIds)
                     ->whereNull('cancelled_at')
                     ->where('start_date', '<=', $day)
                     ->where(static function (Builder $query) use ($day): void {
@@ -42,9 +69,35 @@ class PlanningRoster
                         $query->whereNull('end_date')->orWhere('end_date', '>=', $day);
                     });
             })
+            ->with(['teamAssignments' => function ($query) use ($teamIds, $day): void {
+                $query->whereIn('team_id', $teamIds)
+                    ->whereNull('cancelled_at')
+                    ->where('start_date', '<=', $day)
+                    ->where(static function (Builder $query) use ($day): void {
+                        $query->whereNull('end_date')->orWhere('end_date', '>=', $day);
+                    });
+            }])
             ->orderBy('last_name')
             ->orderBy('first_name')
             ->get();
+
+        foreach ($employees as $employee) {
+            foreach ($employee->teamAssignments as $assignment) {
+                $teamId = (int) $assignment->team_id;
+
+                if (array_key_exists($teamId, $grouped)) {
+                    $grouped[$teamId][(int) $employee->getKey()] = $employee;
+                }
+            }
+        }
+
+        $membersByTeam = [];
+
+        foreach ($grouped as $teamId => $teamEmployees) {
+            $membersByTeam[(int) $teamId] = collect($teamEmployees)->values();
+        }
+
+        return $membersByTeam;
     }
 
     /**

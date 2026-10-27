@@ -14,6 +14,7 @@ use App\Services\Planning\PlanningAssignmentService;
 use App\Services\Planning\PlanningRoster;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Tests\Support\PlanningFixtures;
 
@@ -223,6 +224,62 @@ it('warns about an employee overlap and resolves it by exclusion', function (): 
     );
 
     expect($service->warningsFor($withoutConflict, $bureau))->toBeEmpty();
+});
+
+it('loads team members in bulk when detecting overlaps', function (): void {
+    $bureau = User::factory()->bureauDirection()->create();
+    $baseTeam = PlanningFixtures::team();
+    PlanningFixtures::employee($baseTeam);
+    $base = app(PlanningAssignmentService::class)->create(
+        PlanningFixtures::site(),
+        $baseTeam,
+        '2026-11-02',
+        PlanningHalfDay::Morning,
+        [],
+        $bureau,
+    );
+
+    $otherTeam = PlanningFixtures::team();
+    PlanningFixtures::employee($otherTeam);
+    app(PlanningAssignmentService::class)->create(
+        PlanningFixtures::site(),
+        $otherTeam,
+        '2026-11-02',
+        PlanningHalfDay::Morning,
+        [],
+        $bureau,
+    );
+
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+    app(PlanningAssignmentService::class)->warningsFor($base, $bureau);
+    $baselineQueries = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    for ($index = 0; $index < 5; $index++) {
+        $team = PlanningFixtures::team();
+        PlanningFixtures::employee($team);
+        app(PlanningAssignmentService::class)->create(
+            PlanningFixtures::site(),
+            $team,
+            '2026-11-02',
+            PlanningHalfDay::Morning,
+            [],
+            $bureau,
+        );
+    }
+
+    DB::enableQueryLog();
+    DB::flushQueryLog();
+    $warnings = app(PlanningAssignmentService::class)->warningsFor($base, $bureau);
+    $expandedQueries = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    // Le chargement groupé ne doit pas ajouter une requête par équipe.
+    // La tolérance d'une requête absorbe une éventuelle requête interne de
+    // Laravel sans masquer un N+1 (qui ajouterait ici cinq requêtes).
+    expect($expandedQueries)->toBeLessThanOrEqual($baselineQueries + 1)
+        ->and($warnings)->toBeEmpty();
 });
 
 it('separates morning and afternoon and adjacent dates', function (): void {
