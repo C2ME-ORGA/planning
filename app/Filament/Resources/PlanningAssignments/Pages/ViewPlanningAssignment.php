@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Planning\PlanningAssignmentHistory;
 use App\Services\Planning\PlanningAssignmentService;
 use Filament\Actions\EditAction;
+use Filament\Resources\Pages\Concerns\InteractsWithRecord;
 use Filament\Resources\Pages\Page;
 use Illuminate\Contracts\Support\Htmlable;
 
@@ -20,29 +21,29 @@ use Illuminate\Contracts\Support\Htmlable;
  */
 class ViewPlanningAssignment extends Page
 {
+    use InteractsWithRecord;
+
     protected static string $resource = PlanningAssignmentResource::class;
 
     protected string $view = 'filament.resources.planning-assignments.view';
-
-    public PlanningAssignment $record;
 
     public function mount(PlanningAssignment|int|string $record): void
     {
         $this->record = $this->resolveAssignment($record);
         $this->authorizeView();
-
-        $this->record->loadMissing(['site', 'team', 'exclusions']);
     }
 
     public function hydrate(): void
     {
-        $this->record = $this->resolveAssignment((int) $this->record->getKey());
+        $this->record = $this->resolveAssignment((int) $this->getRecord()->getKey());
         $this->authorizeView();
     }
 
     public function getTitle(): string|Htmlable
     {
-        return 'Affectation du '.$this->record->work_date->format('d/m/Y').' — '.$this->record->half_day->label();
+        $assignment = $this->assignment();
+
+        return 'Affectation du '.$assignment->work_date->format('d/m/Y').' — '.$assignment->half_day->label();
     }
 
     public function getBreadcrumb(): string
@@ -58,7 +59,7 @@ class ViewPlanningAssignment extends Page
         /** @var User $actor */
         $actor = auth()->user();
 
-        return app(PlanningAssignmentService::class)->warningsFor($this->record, $actor);
+        return app(PlanningAssignmentService::class)->warningsFor($this->assignment(), $actor);
     }
 
     /**
@@ -69,7 +70,7 @@ class ViewPlanningAssignment extends Page
         /** @var User $actor */
         $actor = auth()->user();
 
-        return app(PlanningAssignmentHistory::class)->timeline($this->record, $actor);
+        return app(PlanningAssignmentHistory::class)->timeline($this->assignment(), $actor);
     }
 
     /**
@@ -80,9 +81,18 @@ class ViewPlanningAssignment extends Page
         return [
             EditAction::make()
                 ->label('Modifier')
-                ->visible(fn (): bool => ! $this->record->site->isArchived()
-                    && (auth()->user()?->can('update', $this->record) ?? false)),
+                ->visible(fn (): bool => ! $this->assignment()->site->isArchived()
+                    && (auth()->user()?->can('update', $this->assignment()) ?? false)),
         ];
+    }
+
+    private function assignment(): PlanningAssignment
+    {
+        $record = $this->getRecord();
+
+        abort_unless($record instanceof PlanningAssignment, 404);
+
+        return $record;
     }
 
     private function resolveAssignment(PlanningAssignment|int|string $record): PlanningAssignment
@@ -98,6 +108,6 @@ class ViewPlanningAssignment extends Page
 
     private function authorizeView(): void
     {
-        abort_unless(auth()->user()?->can('view', $this->record) ?? false, 403);
+        abort_unless(auth()->user()?->can('view', $this->getRecord()) ?? false, 403);
     }
 }

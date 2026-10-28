@@ -213,7 +213,8 @@ compilation d'assets n'était nécessaire.
 - `tests/Feature/Planning/PlanningNoRealHoursTest.php` : aucune création ou
   préremplissage de relevé, pointage ou segment horaire par le planning.
 
-Résultats PC1-30 observés localement : 47 tests ciblés réussis, puis 266 tests
-de suite réussis à l'exception d'un test ignoré Windows déjà existant. Pint et
-PHPStan/Larastan sont verts. Aucun fichier frontend compilé séparément n'est
-nécessaire : l'interface utilise Livewire et les vues Blade existantes.
+Résultats PC1-30 observés localement : 48 tests ciblés réussis (290 assertions),
+puis 267 tests de suite réussis à l'exception d'un test ignoré Windows déjà
+existant (1884 assertions). Pint et PHPStan/Larastan sont verts. Aucun fichier
+frontend compilé séparément n'est nécessaire : l'interface utilise Livewire et
+les vues Blade existantes.
