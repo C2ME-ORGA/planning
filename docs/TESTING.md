@@ -195,3 +195,26 @@ test de lien symbolique SQLite déjà présent, indisponible sous Windows.
 
 Pint et Larastan sont verts. Aucun fichier frontend n'a été modifié : aucune
 compilation d'assets n'était nécessaire.
+
+## Couverture PC1-30 — historique, conflits et mobile
+
+- `tests/Feature/Planning/PlanningHistoryTest.php` : projection autorisée de
+  l'historique, valeurs avant/après, exclusions ajoutées/retirées, avertissements
+  et absence d'exposition du contexte technique.
+- `tests/Feature/Planning/PlanningDayBoardTest.php` : consultation d'une date,
+  séparation matin/après-midi, conflits groupés et absence de régression du
+  chargement en lot.
+- `tests/Feature/Planning/PlanningArchivedSiteTest.php` : consultation des
+  affectations d'un chantier archivé et refus de toute modification directe ou
+  Filament.
+- `tests/Feature/Planning/PlanningMobileTest.php` : accès autorisé/refusé,
+  navigation par date, états vides, erreurs de date et affichage mobile des
+  conflits et de l'historique.
+- `tests/Feature/Planning/PlanningNoRealHoursTest.php` : aucune création ou
+  préremplissage de relevé, pointage ou segment horaire par le planning.
+
+Résultats PC1-30 observés localement : 48 tests ciblés réussis (290 assertions),
+puis 267 tests de suite réussis à l'exception d'un test ignoré Windows déjà
+existant (1884 assertions). Pint et PHPStan/Larastan sont verts. Aucun fichier
+frontend compilé séparément n'est nécessaire : l'interface utilise Livewire et
+les vues Blade existantes.

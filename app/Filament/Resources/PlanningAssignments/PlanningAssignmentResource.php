@@ -6,6 +6,7 @@ use App\Enums\PlanningHalfDay;
 use App\Filament\Resources\PlanningAssignments\Pages\CreatePlanningAssignment;
 use App\Filament\Resources\PlanningAssignments\Pages\EditPlanningAssignment;
 use App\Filament\Resources\PlanningAssignments\Pages\ListPlanningAssignments;
+use App\Filament\Resources\PlanningAssignments\Pages\ViewPlanningAssignment;
 use App\Filament\Support\ActionFeedback;
 use App\Filament\Support\PlanningWarningAlert;
 use App\Models\PlanningAssignment;
@@ -14,6 +15,7 @@ use App\Services\Planning\PlanningAssignmentService;
 use App\Services\Planning\PlanningRoster;
 use BackedEnum;
 use Filament\Actions\Action;
+use Filament\Actions\ViewAction;
 use Filament\Forms\Components\DatePicker;
 use Filament\Forms\Components\Select;
 use Filament\Resources\Resource;
@@ -142,6 +144,9 @@ class PlanningAssignmentResource extends Resource
                     ->options(PlanningHalfDay::options()),
             ])
             ->recordActions([
+                ViewAction::make()
+                    ->label('Consulter'),
+
                 Action::make('checkConflicts')
                     ->label('Vérifier les chevauchements')
                     ->icon(Heroicon::OutlinedExclamationTriangle)
@@ -167,7 +172,8 @@ class PlanningAssignmentResource extends Resource
                     ->label('Modifier')
                     ->icon(Heroicon::OutlinedPencilSquare)
                     ->url(fn (PlanningAssignment $record): string => static::getUrl('edit', ['record' => $record]))
-                    ->visible(fn (PlanningAssignment $record): bool => auth()->user()?->can('update', $record) ?? false),
+                    ->visible(fn (PlanningAssignment $record): bool => ! $record->site?->isArchived()
+                        && (auth()->user()?->can('update', $record) ?? false)),
             ]);
     }
 
@@ -176,6 +182,7 @@ class PlanningAssignmentResource extends Resource
         return [
             'index' => ListPlanningAssignments::route('/'),
             'create' => CreatePlanningAssignment::route('/create'),
+            'view' => ViewPlanningAssignment::route('/{record}'),
             'edit' => EditPlanningAssignment::route('/{record}/edit'),
         ];
     }

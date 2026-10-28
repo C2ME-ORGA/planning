@@ -72,6 +72,29 @@ it('rejects nonexistent site or team references from the Filament form', functio
     expect(PlanningAssignment::query()->count())->toBe(0);
 });
 
+it('renders the consultation page for an active assignment with its edit action', function (): void {
+    $bureau = User::factory()->bureauDirection()->withMultiFactorAuthentication()->create();
+    $site = PlanningFixtures::site();
+    $team = PlanningFixtures::team();
+    PlanningFixtures::employee($team);
+
+    $assignment = app(PlanningAssignmentService::class)->create(
+        $site,
+        $team,
+        '2026-11-02',
+        PlanningHalfDay::Morning,
+        [],
+        $bureau,
+    );
+
+    $this->actingAs($bureau)
+        ->get('/admin/planning-assignments/'.$assignment->id)
+        ->assertOk()
+        ->assertSee($site->name)
+        ->assertSee('Modifier')
+        ->assertSee('Historique');
+});
+
 it('warns about overlaps after a Filament creation', function (): void {
     $bureau = User::factory()->bureauDirection()->withMultiFactorAuthentication()->create();
     $team = PlanningFixtures::team();

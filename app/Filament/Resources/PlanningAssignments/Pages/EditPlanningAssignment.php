@@ -22,6 +22,9 @@ class EditPlanningAssignment extends EditRecord
     {
         /** @var PlanningAssignment $record */
         $record = $this->getRecord();
+        $record->loadMissing('site');
+
+        abort_if($record->site?->isArchived(), 403);
 
         $data['excluded_employee_ids'] = $record->excludedEmployeeIds();
 

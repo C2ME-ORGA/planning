@@ -22,6 +22,16 @@ class PlanningAssignmentPolicy
         return $this->canRead($actor);
     }
 
+    /**
+     * L'historique est une projection restreinte du journal d'audit, limitée à
+     * une affectation. Il suit les droits de consultation du planning et reste
+     * distinct de `audit.view`, qui seul ouvre le journal complet.
+     */
+    public function viewHistory(User $actor, PlanningAssignment $assignment): bool
+    {
+        return $this->canRead($actor);
+    }
+
     public function create(User $actor): bool
     {
         return $actor->hasPermission(Permission::PlanningManage);
