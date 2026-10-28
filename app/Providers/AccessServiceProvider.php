@@ -14,6 +14,7 @@ use App\Models\Site;
 use App\Models\Team;
 use App\Models\TeamAssignment;
 use App\Models\TeamLeadership;
+use App\Models\Timesheet;
 use App\Models\User;
 use App\Observers\UserObserver;
 use App\Policies\AuditEventPolicy;
@@ -26,6 +27,7 @@ use App\Policies\SitePolicy;
 use App\Policies\TeamAssignmentPolicy;
 use App\Policies\TeamLeadershipPolicy;
 use App\Policies\TeamPolicy;
+use App\Policies\TimesheetPolicy;
 use App\Policies\UserPolicy;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
@@ -62,6 +64,7 @@ class AccessServiceProvider extends ServiceProvider
         Gate::policy(TeamAssignment::class, TeamAssignmentPolicy::class);
         Gate::policy(TeamLeadership::class, TeamLeadershipPolicy::class);
         Gate::policy(PlanningAssignment::class, PlanningAssignmentPolicy::class);
+        Gate::policy(Timesheet::class, TimesheetPolicy::class);
 
         User::observe(UserObserver::class);
 

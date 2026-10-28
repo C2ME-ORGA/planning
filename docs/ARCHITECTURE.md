@@ -160,6 +160,78 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     suppression physique est refusée ; l'historique complet reste à définir
     dans PC1-30.
 
+### 3.3 Relevés d'heures — socle technique (Lot 5, incrément 1)
+
+- **Période** : un relevé (`timesheets`) couvre une semaine civile complète, du
+  lundi au dimanche. La contrainte SQL vérifie le jour de début et la longueur ;
+  le modèle refuse une période non conforme et `Timesheet::weekFor()` ramène
+  toute date au fuseau métier avant de calculer la semaine. Le relevé ne
+  contient ni horaire attendu ni donnée de planning.
+- **Segments** : `timesheet_segments` porte une catégorie
+  (`App\Enums\TimeCategory` : travail effectif, trajet, pause, formation,
+  autre), un début et une fin. Les instants sont stockés en UTC ; les offsets
+  locaux français sont **dérivés de l'instant** à l'écriture par
+  `App\Support\BusinessTime`, jamais fournis séparément. Les catégories et
+  l'ordre strictement croissant des instants sont contrôlés par `CHECK`.
+  `App\Casts\UtcDateTime` refuse toute chaîne de date-heure, y compris avec un
+  offset explicite : un instant doit être fourni comme objet temporel explicite.
+  **Limite :** la dérivation des offsets a lieu dans `TimesheetSegment::saving`
+  lors des sauvegardes Eloquent. Une écriture directe via Query Builder ou SQL
+  contourne ce contrôle et peut stocker un offset incohérent ; aucune contrainte
+  SQL ne l'en empêche aujourd'hui. Les futurs services métier devront privilégier
+  les modèles Eloquent ou appliquer explicitement la même dérivation.
+- **Fuseau** : `App\Services\Timesheets\LocalDateTimeResolver` résout une heure
+  locale `Europe/Paris` en instant non ambigu. Une heure inexistante lors du
+  passage à l'heure d'été est refusée ; une heure ambiguë lors du passage à
+  l'heure d'hiver exige un offset explicite. Aucun arrondi n'est accepté.
+- **Calculs** : `App\Services\Timesheets\WorkedTimeCalculator` calcule des
+  minutes entières, répartit un segment par date civile locale (y compris les
+  jours de 23 ou 25 heures) et garantit que la somme journalière égale la durée
+  totale. Un segment strictement supérieur à 720 minutes produit un
+  avertissement non bloquant ; 720 minutes exactement n'en produit pas.
+- **Chevauchements** : `App\Services\Timesheets\TimesheetOverlapDetector`
+  détecte, pour un même salarié, les segments qui se chevauchent, toutes
+  catégories et tous relevés confondus. `overlapsForSegment()` et
+  `warningsForSegment()` sont réservées aux segments déjà persistés : l'exclusion
+  du segment courant s'appuie sur son identifiant en base.
+  `overlapsForCandidate()` et `warningsForCandidate()` vérifient une plage qui
+  n'existe pas encore. Le résultat est un avertissement non bloquant ; il ne
+  modifie ni ne supprime aucune donnée.
+- **Hors périmètre de cet incrément** : workflow, transmissions, idempotence,
+  policy, interface, validation finale et audit métier. Aucun préremplissage
+  depuis `planning_assignments` n'est introduit.
+
+### 3.4 Autorisations et transitions des relevés (Lot 5, incrément 2A)
+
+- **Transitions** : la matrice est centralisée dans `App\Enums\TimesheetStatus`
+  (`allowedTransitions()`, `canTransitionTo()`, `requiresReasonTo()`). Seul
+  `Brouillon` est éditable ; les autres états sont verrouillés pour l'édition
+  des segments. Aucune transition n'est exécutée par l'enum.
+- **Policy** : `App\Policies\TimesheetPolicy` est enregistrée dans
+  `AccessServiceProvider`. Elle distingue le propriétaire, le contrôleur de
+  périmètre, le Bureau/Direction et l'Administrateur technique. `TimesheetValidate`
+  sert de droit global Bureau pour la gestion, sans conférer la transmission
+  (réservée au salarié propriétaire via `TimesheetOwn`), la réouverture
+  (`WorkflowReopen`) ni l'audit (`AuditView`).
+- **Périmètre** : `App\Services\Timesheets\TimesheetPerimeter` calcule les
+  responsables admissibles à partir des `team_assignments` et
+  `team_leaderships` historisés. Les affectations principales et temporaires
+  sont prises en compte ; l'affectation et la responsabilité doivent se
+  chevaucher pendant la semaine. Les annulations sont exclues, les
+  responsabilités terminées normalement restent pertinentes pour la période
+  couverte. Tous les responsables admissibles le sont sans priorité.
+- **Séparation des tâches** : `App\Services\Timesheets\TimesheetActorHistory`
+  lit les événements `timesheet.created`, `timesheet.updated`,
+  `timesheet.returned_for_correction` et `timesheet.ready_for_validation`.
+  `TimesheetPolicy::validate()` refuse le propriétaire, un préparateur, un
+  contrôleur, et exige une piste d'audit complète. `ApprovalRules` ne doit pas
+  être utilisé seul, car il autorise encore l'auto-validation Bureau.
+  **Limite :** la règle dépend de l'émission exhaustive des événements par les
+  incréments 2B à 2E ; une piste incomplète est refusée, jamais interprétée
+  comme une absence de participation.
+- **Hors périmètre de 2A** : aucun service de brouillon, transmission,
+  contrôle, validation ou réouverture, aucune migration, aucune interface.
+
 Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
 examiner sa compatibilité et justifier le changement. Les versions
 effectives doivent être verrouillées dans `composer.lock` et

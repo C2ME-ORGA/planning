@@ -70,6 +70,14 @@ class Employee extends Model
         return $this->hasMany(TeamLeadership::class)->orderBy('start_date');
     }
 
+    /**
+     * @return HasMany<Timesheet, $this>
+     */
+    public function timesheets(): HasMany
+    {
+        return $this->hasMany(Timesheet::class)->orderBy('period_start');
+    }
+
     public function currentEmploymentPeriod(?CarbonInterface $on = null): ?EmploymentPeriod
     {
         $date = ($on ?? Carbon::today())->toDateString();

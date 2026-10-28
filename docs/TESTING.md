@@ -196,6 +196,63 @@ test de lien symbolique SQLite déjà présent, indisponible sous Windows.
 Pint et Larastan sont verts. Aucun fichier frontend n'a été modifié : aucune
 compilation d'assets n'était nécessaire.
 
+## Couverture du socle des relevés (Lot 5 — incrément 1, 28/10/2026)
+
+- `tests/Unit/LocalDateTimeResolverTest.php` : résolution été/hiver, refus d'une
+  heure inexistante, ambiguïté d'automne avec offset explicite, offset
+  incompatible, formats invalides.
+- `tests/Unit/WorkedTimeCalculatorTest.php` : passage de minuit sans double
+  comptage, seuil strict de 12 heures, journées de 23 et 25 heures, segment
+  traversant un changement d'heure et minuit, durée nulle/négative, secondes et
+  fractions refusées.
+- `tests/Feature/Timesheets/TimesheetSchemaTest.php` : colonnes, index, clés
+  étrangères `restrict`, contraintes de statut, de semaine (lundi + 6 jours,
+  fin avant début, huit jours, dimanche), de catégorie et d'ordre, unicité
+  salarié/semaine, semaine à cheval sur deux années, réversibilité des deux
+  migrations sur une base MySQL temporaire isolée.
+- `tests/Feature/Timesheets/TimesheetModelTest.php` : semaine lundi–dimanche,
+  changement d'année, année bissextile, normalisation d'un `CarbonInterface`
+  dans un autre fuseau, refus des périodes non conformes, cast du statut,
+  stockage UTC et restitution locale, offsets dérivés des instants (y compris
+  pendant l'heure ambiguë d'automne), refus d'une chaîne de date-heure sans
+  contexte, refus des secondes et des durées non positives, suppression
+  physique refusée.
+- `tests/Feature/Timesheets/TimesheetOverlapTest.php` : chevauchement entre
+  deux relevés d'un même salarié, entre catégories d'un même relevé, exclusion
+  automatique du segment courant, segments adjacents et salarié différent,
+  vérification d'une plage candidate, intervalle inchangé, déplacement avec et
+  sans conflit, projection d'avertissement sans donnée nominative.
+- `tests/Unit/TimesheetEnumsTest.php` : cinq catégories autorisées, cinq états,
+  libellés et options.
+
+Commandes et résultats réels :
+
+```powershell
+php artisan test tests/Unit/LocalDateTimeResolverTest.php tests/Unit/WorkedTimeCalculatorTest.php tests/Unit/TimesheetEnumsTest.php tests/Feature/Timesheets tests/Feature/Planning/PlanningNoRealHoursTest.php
+```
+**40 tests, 40 réussis, 158 assertions.**
+
+```powershell
+php artisan test
+```
+**305 tests, 304 réussis, 1 ignoré, 2022 assertions.** Le test ignoré est le
+test de lien symbolique déjà présent, indisponible sous Windows. Un
+avertissement PHPUnit sans détail a été signalé ; il n'a pas fait échouer la
+suite. `composer ci:check` couvre 75,6 % du code, au-dessus du seuil de 35 %.
+
+Pint et Larastan (niveau 7) sont verts. Le test PC1-30
+`PlanningNoRealHoursTest` a été ajusté et renforcé : il vérifie désormais
+l'absence de colonnes `timesheet_id`/`timesheet_segment_id` et de clé étrangère
+vers `timesheets` sur `planning_assignments`, et l'absence de lignes dans
+`timesheets` et `timesheet_segments` après création, modification, consultation
+et consultation mobile du planning.
+
+**Corrections issues de la revue technique :** les offsets sont dérivés des
+instants UTC (`App\Support\BusinessTime`), `UtcDateTime` refuse les chaînes
+naïves, le détecteur expose `overlapsForSegment()`/`overlapsForCandidate()` et
+les tests d'auto-chevauchement ont été corrigés. L'incrément 1 n'est pas déclaré
+validé : la validation reste humaine.
+
 ## Couverture PC1-30 — historique, conflits et mobile
 
 - `tests/Feature/Planning/PlanningHistoryTest.php` : projection autorisée de

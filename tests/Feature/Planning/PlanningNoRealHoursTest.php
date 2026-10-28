@@ -8,6 +8,7 @@ use App\Models\PlanningAssignment;
 use App\Models\TeamAssignment;
 use App\Models\TimeEntry;
 use App\Models\Timesheet;
+use App\Models\TimesheetSegment;
 use App\Models\User;
 use App\Services\Planning\PlanningAssignmentService;
 use App\Services\Planning\PlanningDayBoard;
@@ -27,14 +28,27 @@ it('keeps planning structurally separate from real worked hours', function (): v
         'worked_minutes',
         'clock_in',
         'clock_out',
+        'timesheet_id',
+        'timesheet_segment_id',
     );
 
-    foreach (['time_entries', 'timesheets', 'timesheet_entries', 'time_segments', 'absences', 'pointages'] as $table) {
+    $planningForeignKeys = collect(Schema::getForeignKeys('planning_assignments'));
+
+    expect($planningForeignKeys->contains(
+        static fn (array $foreignKey): bool => in_array(
+            $foreignKey['foreign_table'],
+            ['timesheets', 'timesheet_segments'],
+            true,
+        ),
+    ))->toBeFalse();
+
+    foreach (['time_entries', 'timesheet_entries', 'time_segments', 'absences', 'pointages'] as $table) {
         expect(Schema::hasTable($table))->toBeFalse();
     }
 
-    expect(class_exists(Timesheet::class))->toBeFalse()
-        ->and(class_exists(TimeEntry::class))->toBeFalse();
+    expect(class_exists(TimeEntry::class))->toBeFalse()
+        ->and(Schema::hasTable('timesheets'))->toBeTrue()
+        ->and(Schema::getColumnListing('timesheets'))->not->toContain('planning_assignment_id');
 });
 
 it('does not create or prefill real hours when consulting or modifying planning', function (): void {
@@ -77,9 +91,11 @@ it('does not create or prefill real hours when consulting or modifying planning'
 
     expect(PlanningAssignment::query()->count())->toBe(1)
         ->and($planningAuditActions)->toBe(2)
-        ->and($assignment->fresh()->excludedEmployeeIds())->toBe([$employee->id]);
+        ->and($assignment->fresh()->excludedEmployeeIds())->toBe([$employee->id])
+        ->and(Timesheet::query()->count())->toBe(0)
+        ->and(TimesheetSegment::query()->count())->toBe(0);
 
-    foreach (['time_entries', 'timesheets', 'timesheet_entries', 'time_segments', 'absences', 'pointages'] as $table) {
+    foreach (['time_entries', 'timesheet_entries', 'time_segments', 'absences', 'pointages'] as $table) {
         expect(Schema::hasTable($table))->toBeFalse();
     }
 

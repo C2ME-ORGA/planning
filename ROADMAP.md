@@ -49,6 +49,7 @@ Le dépôt contient une application Laravel 13.38 avec Livewire 4.4, Filament 5.
 **Point d’arrêt humain :** valider avant les relevés.
 
 ## Lot 5 — Relevés et workflow
+**Statut :** incrément 1 (socle technique des relevés) livré le 28/10/2026 puis corrigé après revue technique : semaine civile, catégories, segments, offsets dérivés des instants UTC, calculs à la minute, fuseau `Europe/Paris` et détection des chevauchements sans auto-détection. Workflow, transmissions, idempotence, interfaces et validation finale restent à implémenter. La validation humaine de l'incrément 1 est en attente.
 **Travaux :** segments horaires et cinq catégories, saisie à la minute, passage minuit, motifs d’absence de saisie, états du workflow, soumission idempotente, correction, contrôle groupé, validation finale, réouverture motivée et tableaux de bord.  
 **Tests :** durées, segments incomplets, chevauchements, seuil 12 h, transitions autorisées/interdites, idempotence, verrouillage après confirmation serveur, audit, retours en correction et réouverture.  
 **Acceptation :** parcours de l’ouvrier au bureau testé de bout en bout.  
