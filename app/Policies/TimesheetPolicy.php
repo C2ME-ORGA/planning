@@ -130,7 +130,7 @@ class TimesheetPolicy
         return $this->canControl($actor, $timesheet);
     }
 
-    public function validate(User $actor, Timesheet $timesheet): bool
+    public function validate(User $actor, Timesheet $timesheet, ?string $reason = null): bool
     {
         if (! $this->transitionAllowed($timesheet, TimesheetStatus::Validee, null)) {
             return false;
@@ -140,15 +140,19 @@ class TimesheetPolicy
             return false;
         }
 
-        if ($this->isOwner($actor, $timesheet)) {
+        $selfValidation = $this->isOwner($actor, $timesheet);
+
+        if ($selfValidation && ! $this->hasValidReason($reason)) {
             return false;
         }
 
-        if ($this->history->isPreparedBy($actor, $timesheet)) {
+        // PC1-32 autorise explicitement l'auto-validation Bureau/Direction
+        // si un motif est fourni ; l'événement dédié est écrit par le service.
+        if (! $selfValidation && $this->history->isPreparedBy($actor, $timesheet)) {
             return false;
         }
 
-        if ($this->history->hasControlled($actor, $timesheet)) {
+        if (! $selfValidation && $this->history->hasControlled($actor, $timesheet)) {
             return false;
         }
 

@@ -30,23 +30,37 @@ class TimesheetValidationService
         private readonly AuditLogger $audit,
     ) {}
 
-    public function validate(Timesheet $timesheet, User $actor): Timesheet
+    public function validate(Timesheet $timesheet, User $actor, ?string $reason = null): Timesheet
     {
-        return DB::transaction(function () use ($timesheet, $actor): Timesheet {
+        return DB::transaction(function () use ($timesheet, $actor, $reason): Timesheet {
             $locked = $this->lockTimesheet($timesheet);
 
-            // L'historique est lu par la policy après acquisition du verrou.
-            Gate::forUser($actor)->authorize('validate', $locked);
+            // Le motif n'est obligatoire que pour une auto-validation Bureau/Direction.
+            // La policy détermine si l'acteur est propriétaire et impose alors le motif.
+            Gate::forUser($actor)->authorize('validate', [$locked, $reason]);
 
             $from = $locked->status;
 
             $locked->forceFill(['status' => TimesheetStatus::Validee->value])->save();
 
+            if ($locked->employee?->user_id === $actor->getKey()) {
+                $normalizedReason = TimesheetReason::required($reason ?? '');
+                $this->audit->record(
+                    AuditAction::SelfApprovalRecorded,
+                    $locked,
+                    ['from' => $from->value, 'to' => TimesheetStatus::Validee->value],
+                    $normalizedReason,
+                    $actor,
+                );
+            }
+
             $this->audit->record(
                 AuditAction::TimesheetValidated,
                 $locked,
                 ['from' => $from->value, 'to' => TimesheetStatus::Validee->value],
-                null,
+                $locked->employee?->user_id === $actor->getKey()
+                    ? TimesheetReason::required($reason ?? '')
+                    : null,
                 $actor,
             );
 
