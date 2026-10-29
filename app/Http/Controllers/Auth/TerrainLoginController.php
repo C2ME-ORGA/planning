@@ -16,8 +16,12 @@ class TerrainLoginController extends Controller
 {
     public function show(): View|RedirectResponse
     {
-        if (Auth::guard('web')->check()) {
-            return redirect()->route('planning.mobile');
+        $user = Auth::guard('web')->user();
+
+        if ($user instanceof User) {
+            return redirect()->route(
+                $user->role->canAccessAdministrationPanel() ? 'filament.admin.pages.dashboard' : 'planning.mobile',
+            );
         }
 
         return view('auth.login');
