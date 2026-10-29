@@ -25,8 +25,12 @@ class EnsureAccountIsActive
             $request->session()->invalidate();
             $request->session()->regenerateToken();
 
-            return redirect('/admin/login')
-                ->withErrors(['email' => 'Ce compte a été désactivé.']);
+            $loginPath = $request->is('admin') || $request->is('admin/*')
+                ? '/admin/login'
+                : route('login');
+
+            return redirect($loginPath)
+                ->withErrors(['email' => 'Ces identifiants ne correspondent pas à nos enregistrements.']);
         }
 
         return $next($request);
