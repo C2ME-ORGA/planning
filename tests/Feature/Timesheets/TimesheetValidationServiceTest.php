@@ -105,7 +105,7 @@ it('refuses validation by a role without the validation permission', function ()
     expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation);
 });
 
-it('refuses validation by the owner of the timesheet', function (): void {
+it('allows Bureau self-validation only with a reason and records a dedicated audit event', function (): void {
     $bureauEmployee = TimesheetFixtures::employee($this->bureau);
     $timesheet = pc132CompleteTrail($bureauEmployee, $this->ownerUser, $this->chefUser);
 
@@ -113,6 +113,15 @@ it('refuses validation by the owner of the timesheet', function (): void {
         ->toThrow(AuthorizationException::class);
 
     expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation);
+
+    $this->service->validate($timesheet, $this->bureau, 'Auto-validation motivée : contrôle documentaire effectué');
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Validee)
+        ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)
+            ->where('subject_id', (string) $timesheet->getKey())->count())->toBe(1)
+        ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)
+            ->where('subject_id', (string) $timesheet->getKey())->firstOrFail()->reason)
+            ->toBe('Auto-validation motivée : contrôle documentaire effectué');
 });
 
 it('refuses validation by an actor who prepared the timesheet', function (): void {
