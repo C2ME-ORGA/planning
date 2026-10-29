@@ -2,7 +2,6 @@
 
 use App\Enums\Role;
 use App\Models\User;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 
 it('allows active and activated terrain roles to sign in to the planning', function (Role $role) {
