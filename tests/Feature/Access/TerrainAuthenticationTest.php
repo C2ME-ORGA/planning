@@ -71,3 +71,20 @@ it('logs out the web session', function () {
 
     $this->assertGuest('web');
 });
+
+it('does not allow administrative roles to bypass Filament multi-factor authentication through terrain login', function (Role $role) {
+    $user = User::factory()->role($role)->create([
+        'email' => strtolower($role->value).'@example.test',
+        'password' => Hash::make('Admin-Passw0rd!'),
+    ]);
+
+    $this->post('/login', [
+        'email' => $user->email,
+        'password' => 'Admin-Passw0rd!',
+    ])->assertSessionHasErrors('email');
+
+    $this->assertGuest('web');
+})->with([
+    'administrateur' => Role::Admin,
+    'bureau_direction' => Role::BureauDirection,
+]);
