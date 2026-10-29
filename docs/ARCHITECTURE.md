@@ -350,7 +350,9 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   être écrits dans la même transaction. L'ordre de verrouillage reste relevé
   parent puis segment, comme en 2B. Le service appliquera les exclusions
   existantes (propriétaire, préparateur, contrôleurs) et n'ajoutera aucune
-  exclusion automatique des validateurs ou réouvreurs précédents. Aucun service
+  exclusion automatique des validateurs ou réouvreurs précédents. Il refusera
+  la validation si la piste requise est incomplète ou non attribuable, et lira
+  l'historique sous le même verrou que la décision de transition. Aucun service
   de validation, de contrôle ou de réouverture n'est implémenté dans 2B.
 - **Garde de suppression** : `TimesheetSegment::deleting` refuse la suppression
   hors brouillon en défense en profondeur. Le service reste l'autorité

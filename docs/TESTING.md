@@ -331,6 +331,7 @@ périmé, sérialisation de la transmission et des écritures de segments par le
 même relevé parent, refus d'écriture après transmission, refus de transmettre
 après suppression du dernier segment, et rollback complet en cas d'échec
 d'audit. Un test multi-processus reste à prévoir si l'infrastructure le permet.
+Un test d'intégration dédié, hors `RefreshDatabase`, pourra utiliser deux connexions MySQL sur des données commitées pour vérifier le comportement du verrouillage du relevé parent : une opération concurrente doit attendre la libération du verrou ou échouer si le délai d'attente est dépassé (`innodb_lock_wait_timeout`). Ce test permettra de vérifier la sérialisation des accès via InnoDB, sans constituer pour autant une preuve de concurrence multi-processus sur l'ensemble du workflow.
 
 ## Couverture PC1-30 — historique, conflits et mobile
 
