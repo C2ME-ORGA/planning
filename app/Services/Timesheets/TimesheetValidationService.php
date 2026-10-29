@@ -44,7 +44,7 @@ class TimesheetValidationService
             $locked->forceFill(['status' => TimesheetStatus::Validee->value])->save();
 
             if ($locked->employee?->user_id === $actor->getKey()) {
-                $normalizedReason = \App\Support\TimesheetReason::required($reason ?? '');
+                $normalizedReason = TimesheetReason::required($reason ?? '');
                 $this->audit->record(
                     AuditAction::SelfApprovalRecorded,
                     $locked,
@@ -59,7 +59,7 @@ class TimesheetValidationService
                 $locked,
                 ['from' => $from->value, 'to' => TimesheetStatus::Validee->value],
                 $locked->employee?->user_id === $actor->getKey()
-                    ? \App\Support\TimesheetReason::required($reason ?? '')
+                    ? TimesheetReason::required($reason ?? '')
                     : null,
                 $actor,
             );

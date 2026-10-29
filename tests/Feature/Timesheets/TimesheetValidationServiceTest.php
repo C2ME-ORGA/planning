@@ -121,7 +121,7 @@ it('allows Bureau self-validation only with a reason and records a dedicated aud
             ->where('subject_id', (string) $timesheet->getKey())->count())->toBe(1)
         ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)
             ->where('subject_id', (string) $timesheet->getKey())->firstOrFail()->reason)
-            ->toBe('Auto-validation motivée : contrôle documentaire effectué');
+        ->toBe('Auto-validation motivée : contrôle documentaire effectué');
 });
 
 it('refuses validation by an actor who prepared the timesheet', function (): void {
