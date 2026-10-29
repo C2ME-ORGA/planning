@@ -196,6 +196,143 @@ test de lien symbolique SQLite déjà présent, indisponible sous Windows.
 Pint et Larastan sont verts. Aucun fichier frontend n'a été modifié : aucune
 compilation d'assets n'était nécessaire.
 
+## Couverture du socle des relevés (Lot 5 — incrément 1, 28/10/2026)
+
+- `tests/Unit/LocalDateTimeResolverTest.php` : résolution été/hiver, refus d'une
+  heure inexistante, ambiguïté d'automne avec offset explicite, offset
+  incompatible, formats invalides.
+- `tests/Unit/WorkedTimeCalculatorTest.php` : passage de minuit sans double
+  comptage, seuil strict de 12 heures, journées de 23 et 25 heures, segment
+  traversant un changement d'heure et minuit, durée nulle/négative, secondes et
+  fractions refusées.
+- `tests/Feature/Timesheets/TimesheetSchemaTest.php` : colonnes, index, clés
+  étrangères `restrict`, contraintes de statut, de semaine (lundi + 6 jours,
+  fin avant début, huit jours, dimanche), de catégorie et d'ordre, unicité
+  salarié/semaine, semaine à cheval sur deux années, réversibilité des deux
+  migrations sur une base MySQL temporaire isolée.
+- `tests/Feature/Timesheets/TimesheetModelTest.php` : semaine lundi–dimanche,
+  changement d'année, année bissextile, normalisation d'un `CarbonInterface`
+  dans un autre fuseau, refus des périodes non conformes, cast du statut,
+  stockage UTC et restitution locale, offsets dérivés des instants (y compris
+  pendant l'heure ambiguë d'automne), refus d'une chaîne de date-heure sans
+  contexte, refus des secondes et des durées non positives, suppression
+  physique refusée.
+- `tests/Feature/Timesheets/TimesheetOverlapTest.php` : chevauchement entre
+  deux relevés d'un même salarié, entre catégories d'un même relevé, exclusion
+  automatique du segment courant, segments adjacents et salarié différent,
+  vérification d'une plage candidate, intervalle inchangé, déplacement avec et
+  sans conflit, projection d'avertissement sans donnée nominative.
+- `tests/Unit/TimesheetEnumsTest.php` : cinq catégories autorisées, cinq états,
+  libellés et options.
+
+Commandes et résultats réels :
+
+```powershell
+php artisan test tests/Unit/LocalDateTimeResolverTest.php tests/Unit/WorkedTimeCalculatorTest.php tests/Unit/TimesheetEnumsTest.php tests/Feature/Timesheets tests/Feature/Planning/PlanningNoRealHoursTest.php
+```
+**40 tests, 40 réussis, 158 assertions.**
+
+```powershell
+php artisan test
+```
+**305 tests, 304 réussis, 1 ignoré, 2022 assertions.** Le test ignoré est le
+test de lien symbolique déjà présent, indisponible sous Windows. Un
+avertissement PHPUnit sans détail a été signalé ; il n'a pas fait échouer la
+suite. `composer ci:check` couvre 75,6 % du code, au-dessus du seuil de 35 %.
+
+Pint et Larastan (niveau 7) sont verts. Le test PC1-30
+`PlanningNoRealHoursTest` a été ajusté et renforcé : il vérifie désormais
+l'absence de colonnes `timesheet_id`/`timesheet_segment_id` et de clé étrangère
+vers `timesheets` sur `planning_assignments`, et l'absence de lignes dans
+`timesheets` et `timesheet_segments` après création, modification, consultation
+et consultation mobile du planning.
+
+**Corrections issues de la revue technique :** les offsets sont dérivés des
+instants UTC (`App\Support\BusinessTime`), `UtcDateTime` refuse les chaînes
+naïves, le détecteur expose `overlapsForSegment()`/`overlapsForCandidate()` et
+les tests d'auto-chevauchement ont été corrigés. L'incrément 1 n'est pas déclaré
+validé : la validation reste humaine.
+
+## Couverture du 2B des relevés (Lot 5 — saisie et transmission, 29/10/2026)
+
+- `tests/Feature/Timesheets/TimesheetReasonTest.php` : motif facultatif absent
+  ou blanc, nettoyage `trim`, motif obligatoire manquant, 500 caractères
+  acceptés et 501 refusés, texte multioctet, absence de valeur inventée.
+- `tests/Feature/Timesheets/TimesheetReasonAuditTest.php` : la valeur normalisée
+  est acceptée par la policy `reopen` puis enregistrée à l'identique dans
+  `audit_events.reason`, avec un acteur identifié.
+- `tests/Feature/Timesheets/TimesheetCreationServiceTest.php` : ouverture par le
+  propriétaire, normalisation de la semaine au lundi, création par le Bureau
+  pour un salarié sans compte lié, refus d'un autre salarié et de
+  l'Administrateur, retour d'un relevé existant uniquement si l'acteur peut le
+  consulter, absence de doublon, audit `timesheet.created` attribué, rollback si
+  l'audit échoue.
+- `tests/Feature/Timesheets/TimesheetSegmentServiceTest.php` : ajout par le
+  propriétaire et par le Bureau, dérivation des offsets, passage de minuit dans
+  la semaine, dernière minute du dimanche acceptée, début avant la semaine et
+  franchissement de la limite refusés, secondes/fractions, plage inversée et
+  catégorie inconnue refusées, acteur non autorisé, relevé non brouillon, objet
+  périmé revalidé sous verrou, mise à jour auditée, segment d'un autre salarié
+  refusé, suppression auditée, garde de suppression du modèle hors brouillon,
+  rollback si l'audit échoue.
+- `tests/Feature/Timesheets/TimesheetSubmissionServiceTest.php` : transmission
+  valide et audit `timesheet.submitted` attribué, brouillon sans segment refusé,
+  Bureau et chef refusés, salarié sans compte lié refusé, compte inactif refusé,
+  idempotence par état sans second audit, retour d'un relevé déjà transmis
+  même si ses segments sont incohérents (sans transition ni audit), rejeu par
+  un autre compte refusé,
+  aucune écriture de segment après transmission, dernier segment supprimé puis
+  transmission refusée, revalidation de la précision à la minute (secondes non
+  nulles refusées, segment à la minute entière accepté), revalidation des bornes
+  de semaine (segment hors semaine refusé, franchissement dimanche/lundi refusé,
+  segment valide traversant minuit accepté), avertissements de durée et de
+  chevauchement non bloquants consignés dans le contexte, état incompatible
+  refusé, rollback si l'audit échoue.
+- `tests/Feature/Timesheets/TimesheetWeekBoundsTest.php` : bornes UTC des
+  semaines contenant les changements d'heure de mars et d'octobre, acceptation
+  d'un instant valide dans ces semaines, refus d'un instant postérieur à la
+  semaine d'octobre.
+- `tests/Feature/Timesheets/TimesheetActorHistoryTest.php` (étendu) : frontière
+  de cycle par la dernière action `reopened` ou `correction_resumed`, événements
+  de complétude exigés après la frontière, frontière sans acteur refusée,
+  absence de frontière compatible, ancien validateur/réouvertureur non exclu du
+  seul fait de ces actions, `correction_resumed` non traité comme préparation.
+
+Commandes et résultats réels :
+
+```powershell
+php artisan test tests/Feature/Timesheets/TimesheetReasonTest.php tests/Feature/Timesheets/TimesheetReasonAuditTest.php tests/Feature/Timesheets/TimesheetCreationServiceTest.php tests/Feature/Timesheets/TimesheetSegmentServiceTest.php tests/Feature/Timesheets/TimesheetSubmissionServiceTest.php tests/Feature/Timesheets/TimesheetWeekBoundsTest.php
+```
+**52 tests, 52 réussis, 139 assertions.**
+
+```powershell
+php artisan test tests/Feature/Timesheets/TimesheetActorHistoryTest.php
+```
+**11 tests, 11 réussis, 21 assertions** (6 tests/11 assertions en 2A, 5 tests
+ajoutés en 2B).
+
+```powershell
+php artisan test tests/Feature/Timesheets
+```
+**115 tests, 115 réussis, 346 assertions.**
+
+```powershell
+./vendor/bin/pint --test
+./vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+```
+**Pint : passé. Larastan niveau 7 : 0 erreur.**
+
+**Limite de concurrence :** `RefreshDatabase` exécute chaque test dans une
+transaction unique ; une seconde connexion ne voit donc pas les données non
+commitées et un test multi-connexion de verrou de ligne ne peut pas être fiable.
+Aucun test n'est présenté comme une preuve de concurrence multi-processus. Les
+invariants couverts sont : revalidation du statut sous verrou avec un objet
+périmé, sérialisation de la transmission et des écritures de segments par le
+même relevé parent, refus d'écriture après transmission, refus de transmettre
+après suppression du dernier segment, et rollback complet en cas d'échec
+d'audit. Un test multi-processus reste à prévoir si l'infrastructure le permet.
+Un test d'intégration dédié, hors `RefreshDatabase`, pourra utiliser deux connexions MySQL sur des données commitées pour vérifier le comportement du verrouillage du relevé parent : une opération concurrente doit attendre la libération du verrou ou échouer si le délai d'attente est dépassé (`innodb_lock_wait_timeout`). Ce test permettra de vérifier la sérialisation des accès via InnoDB, sans constituer pour autant une preuve de concurrence multi-processus sur l'ensemble du workflow.
+
 ## Couverture PC1-30 — historique, conflits et mobile
 
 - `tests/Feature/Planning/PlanningHistoryTest.php` : projection autorisée de

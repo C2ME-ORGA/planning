@@ -58,6 +58,15 @@ enum AuditAction: string
     case PlanningAssignmentCreated = 'planning.assignment_created';
     case PlanningAssignmentUpdated = 'planning.assignment_updated';
 
+    case TimesheetCreated = 'timesheet.created';
+    case TimesheetUpdated = 'timesheet.updated';
+    case TimesheetSubmitted = 'timesheet.submitted';
+    case TimesheetReturnedForCorrection = 'timesheet.returned_for_correction';
+    case TimesheetCorrectionResumed = 'timesheet.correction_resumed';
+    case TimesheetReadyForValidation = 'timesheet.ready_for_validation';
+    case TimesheetValidated = 'timesheet.validated';
+    case TimesheetReopened = 'timesheet.reopened';
+
     case SelfApprovalRecorded = 'approval.self_approval_recorded';
 
     case EmergencyLockdown = 'system.emergency_lockdown';
@@ -112,6 +121,14 @@ enum AuditAction: string
             self::SiteReopened => 'Chantier réouvert',
             self::PlanningAssignmentCreated => 'Affectation de planning créée',
             self::PlanningAssignmentUpdated => 'Affectation de planning modifiée',
+            self::TimesheetCreated => 'Relevé d’heures créé',
+            self::TimesheetUpdated => 'Relevé d’heures modifié',
+            self::TimesheetSubmitted => 'Relevé transmis',
+            self::TimesheetReturnedForCorrection => 'Relevé retourné en correction',
+            self::TimesheetCorrectionResumed => 'Reprise du relevé en correction',
+            self::TimesheetReadyForValidation => 'Relevé prêt pour validation',
+            self::TimesheetValidated => 'Relevé validé',
+            self::TimesheetReopened => 'Relevé réouvert',
             self::SelfApprovalRecorded => 'Auto-validation motivée',
             self::EmergencyLockdown => 'Verrouillage d’urgence',
         };
