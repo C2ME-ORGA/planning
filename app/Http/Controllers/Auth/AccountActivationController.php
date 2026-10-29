@@ -1,16 +1,16 @@
 <?php
 
-namespace App\\Http\\Controllers\\Auth;
+namespace App\Http\Controllers\Auth;
 
-use App\\Enums\\Role;
-use App\\Http\\Controllers\\Controller;
-use App\\Services\\Accounts\\AccountActivationService;
-use App\\Services\\Accounts\\AccountProvisioner;
-use Illuminate\\Http\\RedirectResponse;
-use Illuminate\\Http\\Request;
-use Illuminate\\Validation\\Rules\\Password;
-use Illuminate\\View\\View;
-use Symfony\\Component\\HttpFoundation\\Response;
+use App\Enums\Role;
+use App\Http\Controllers\Controller;
+use App\Services\Accounts\AccountActivationService;
+use App\Services\Accounts\AccountProvisioner;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Validation\Rules\Password;
+use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\Response;
 
 class AccountActivationController extends Controller
 {
