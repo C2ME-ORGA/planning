@@ -52,7 +52,7 @@ class TerrainLoginController extends Controller
             ]);
         }
 
-        Auth::guard('web')->login($user, $request->boolean('remember'));
+        Auth::guard('web')->login($user);
         $request->session()->regenerate();
 
         return redirect()->intended(route('planning.mobile'));
