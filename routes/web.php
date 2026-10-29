@@ -1,10 +1,10 @@
 <?php
 
-use App\\Http\\Controllers\\Auth\\AccountActivationController;
-use App\\Http\\Controllers\\Auth\\TerrainLoginController;
-use App\\Http\\Middleware\\EnsureAccountIsActive;
-use App\\Livewire\\Planning\\MobilePlanning;
-use Illuminate\\Support\\Facades\\Route;
+use App\Http\Controllers\Auth\AccountActivationController;
+use App\Http\Controllers\Auth\TerrainLoginController;
+use App\Http\Middleware\EnsureAccountIsActive;
+use App\Livewire\Planning\MobilePlanning;
+use Illuminate\Support\Facades\Route;
 
 Route::view('/', 'welcome')->name('home');
 
