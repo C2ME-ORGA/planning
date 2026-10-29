@@ -40,6 +40,7 @@ class TerrainLoginController extends Controller
             ->where('email', $email)
             ->where('is_active', true)
             ->whereNotNull('activated_at')
+            ->whereIn('role', [Role::Conducteur->value, Role::ChefEquipe->value, Role::Ouvrier->value])
             ->first();
 
         if ($user === null || ! Hash::check($credentials['password'], $user->password)) {
