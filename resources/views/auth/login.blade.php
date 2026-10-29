@@ -35,11 +35,7 @@
                 @if ($errors->any())
                     <p role="alert" class="text-sm text-red-700">{{ $errors->first() }}</p>
                 @endif
-                <label class="flex items-center gap-2 text-sm text-slate-600">
-                    <input type="checkbox" name="remember" value="1" class="rounded border-slate-300 text-amber-600">
-                    Se souvenir de moi
-                </label>
-                <button type="submit" class="w-full rounded-md bg-amber-600 px-4 py-2.5 font-semibold text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2">
+                    <button type="submit" class="w-full rounded-md bg-amber-600 px-4 py-2.5 font-semibold text-white hover:bg-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-600 focus:ring-offset-2">
                     Se connecter
                 </button>
             </form>
