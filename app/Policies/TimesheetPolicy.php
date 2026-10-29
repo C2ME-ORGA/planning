@@ -8,6 +8,7 @@ use App\Models\Timesheet;
 use App\Models\User;
 use App\Services\Timesheets\TimesheetActorHistory;
 use App\Services\Timesheets\TimesheetPerimeter;
+use App\Support\TimesheetReason;
 
 /**
  * Autorisations des relevés d'heures.
@@ -225,6 +226,6 @@ class TimesheetPolicy
 
         $reason = trim($reason);
 
-        return $reason !== '' && mb_strlen($reason) <= 500;
+        return $reason !== '' && mb_strlen($reason) <= TimesheetReason::MAX_LENGTH;
     }
 }

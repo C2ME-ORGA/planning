@@ -250,9 +250,11 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   validation. `ApprovalRules` ne doit pas être utilisé seul, car il autorise
   encore l'auto-validation Bureau.
   **Limite :** la règle dépend de l'émission exhaustive des événements par les
-  incréments 2B à 2E ; une piste incomplète ou non attribuable est refusée,
-  jamais interprétée comme une absence de participation. Aucun acteur n'est
-  inventé pour les événements générés hors requête utilisateur.
+  incréments 2B à 2E ; 2B émet déjà `created` et `submitted`, les événements de
+  contrôle et de validation restant à venir. Une piste incomplète ou non
+  attribuable est refusée, jamais interprétée comme une absence de
+  participation. Aucun acteur n'est inventé pour les événements générés hors
+  requête utilisateur.
 - **Validateurs disponibles** : aucun nombre minimal de comptes
   Bureau/Direction n'est imposé par le système. Un acteur qui a préparé ou
   contrôlé un relevé ne peut pas le valider lui-même. Si l'unique compte
@@ -261,11 +263,11 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   (`TimesheetValidate`). Ce délai est un risque opérationnel accepté : il doit
   être anticipé par l'organisation.
 - **Verrouillage des segments** : l'édition d'un relevé n'est autorisée que sur
-  un `Brouillon`. Toute future création ou modification de segment
-  (incrément 2B) devra respecter la même règle et être autorisée côté serveur
-  via la policy du relevé concerné, sur le relevé réellement chargé ; les
-  services à venir ne doivent jamais s'appuyer sur la seule interface ni sur un
-  identifiant fourni par le client.
+  un `Brouillon`. L'incrément 2B applique cette règle côté serveur via la policy
+  du relevé et un verrou sur la ligne `timesheets` (voir §3.5) ; les services à
+  venir doivent conserver cette vérification sur le relevé réellement chargé et
+  ne jamais s'appuyer sur la seule interface ni sur un identifiant fourni par le
+  client.
 - **Portée de l'autorisation de transmettre** : la policy ne vérifie que
   l'existence d'au moins un segment. Elle n'établit pas la complétude métier du
   relevé. Les règles de complétude relèvent des incréments 2B/2C et ne sont pas
@@ -276,6 +278,87 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   n'est exécutée en 2A ; elle sera implémentée dans un incrément ultérieur.
 - **Hors périmètre de 2A** : aucun service de brouillon, transmission,
   contrôle, validation ou réouverture, aucune migration, aucune interface.
+
+### 3.5 Saisie et transmission des relevés (Lot 5, incrément 2B)
+
+- **Services** : `TimesheetService::openFor()` ouvre la semaine d'un salarié,
+  `TimesheetSegmentService` gère l'ajout, la modification et la suppression des
+  segments, `TimesheetSubmissionService::submit()` transmet un brouillon vers
+  `À contrôler`. `App\Support\TimesheetReason` normalise les motifs.
+- **Création** : la capacité `createFor` est appelée avec un `Timesheet`
+  non enregistré portant `employee_id` ; `create` n'est jamais appelée avec un
+  `Employee`. La semaine est calculée par `Timesheet::weekFor()` et jamais
+  fournie par le client. Un brouillon peut être créé pour un salarié sans
+  compte lié, mais seul un compte actif et lié pourra le transmettre.
+  Un relevé déjà existant pour la même semaine n'est retourné que si l'acteur
+  est autorisé à le consulter ; sinon l'opération est refusée sans divulguer
+  son existence, son statut ou son contenu. L'unicité
+  `(employee_id, period_start)` reste la garantie de dernier recours : après
+  une violation d'unicité, le service recharge le relevé et réapplique le
+  contrôle d'autorisation avant tout retour. Seule cette violation précise
+  (`1062`) est interceptée ; les autres erreurs SQL sont propagées.
+- **Bornes temporelles** : un segment doit commencer et finir dans la semaine
+  du relevé, du lundi 00:00 au dimanche 23:59 heure de `Europe/Paris`,
+  comparées en UTC. Un segment peut traverser minuit à l'intérieur de la
+  semaine ; il ne peut pas franchir la limite de semaine. La dernière minute
+  acceptée est le dimanche 23:59 ; le lundi 00:00 suivant est hors semaine.
+  Aucun arrondi n'est appliqué ; les secondes et fractions restent refusées.
+  La précision à la minute est centralisée dans
+  `App\Support\TimesheetMinutePrecision`, utilisée par le modèle, l'écriture
+  des segments et la transmission.
+  La règle des bornes est centralisée dans `App\Support\TimesheetWeekBounds`,
+  utilisée à l'écriture d'un segment et revalidée à la transmission.
+- **Concurrence** : toute écriture de segment et la transmission verrouillent
+  d'abord la ligne `timesheets` concernée (`lockForUpdate`), puis relisent le
+  statut, le propriétaire et, pour un segment, son appartenance au relevé
+  verrouillé. L'ordre de verrouillage est toujours relevé parent puis segment.
+  Un objet chargé avant un changement de statut est donc revalidé sous verrou.
+  L'audit est écrit dans la même transaction que la modification : une erreur
+  d'audit annule l'écriture métier.
+- **Transmission** : réservée au salarié propriétaire, avec un compte actif et
+  lié ; le Bureau et les responsables ne transmettent jamais à sa place. La
+  transmission exige au moins un segment, revalide la précision à la minute et
+  les bornes de semaine de chaque segment existant, reste non bloquante pour
+  les avertissements de chevauchement et de durée supérieure à 720 minutes, et
+  est idempotente par état : un relevé déjà `À contrôler` est retourné sans
+  nouvel événement. Aucune clé d'idempotence réseau n'est introduite (Lot 10).
+- **Audit des segments** : les ajouts, modifications et suppressions réutilisent
+  `timesheet.updated`. L'événement porte `operation`, l'identifiant du segment,
+  les champs modifiés et les valeurs utiles (catégorie, instants UTC). Une
+  suppression conserve l'identifiant et les valeurs supprimées sans prétendre
+  que le segment existe encore. Aucun motif n'est dupliqué dans `changes`.
+- **Motifs** : `TimesheetReason` applique `trim()`, refuse un motif obligatoire
+  absent ou blanc, borne à 500 caractères Unicode et retourne la valeur
+  normalisée. La même valeur doit servir à l'autorisation Gate et à
+  `audit_events.reason` ; aucune valeur par défaut n'est inventée.
+- **Cycle d'audit** : `TimesheetActorHistory` borne les événements de
+  complétude (`submitted`, `ready_for_validation`) après la dernière action
+  `timesheet.reopened` ou `timesheet.correction_resumed`, identifiée par la
+  séquence du journal et non par `occurred_at`. La création reste exigée
+  globalement. Un événement de frontière sans acteur rend la validation
+  impossible. Les exclusions de propriété, de préparation et de contrôle
+  restent globales, tous cycles confondus : un ancien validateur ou
+  réouvertureur n'est pas exclu du seul fait de ces actions, et
+  `correction_resumed` n'est pas une action de préparation.
+- **Contrat de verrouillage pour la validation (2C)** : le futur service de
+  validation devra ouvrir une transaction, verrouiller le relevé parent avec
+  `lockForUpdate()`, revalider les autorisations et le statut sur l'instance
+  verrouillée, puis seulement lire la piste d'audit et vérifier la complétude
+  du cycle courant. La transition et l'événement `timesheet.validated` devront
+  être écrits dans la même transaction. L'ordre de verrouillage reste relevé
+  parent puis segment, comme en 2B. Aucun service de validation, de contrôle ou
+  de réouverture n'est implémenté dans 2B.
+- **Garde de suppression** : `TimesheetSegment::deleting` refuse la suppression
+  hors brouillon en défense en profondeur. Le service reste l'autorité
+  principale. Limite : les suppressions de masse Eloquent
+  (`query()->delete()`, `destroy()`) et les écritures directes via Query Builder
+  ne déclenchent pas les événements du modèle et ne sont donc pas couvertes par
+  ce garde. Aucun trigger SQL n'est ajouté.
+- **Reporté** : le motif obligatoire pour une journée attendue sans heure
+  dépend du planning et des absences (Lot 7). Le contrôle, la reprise de
+  correction, la validation finale, la réouverture, le contrôle groupé,
+  l'interface et l'idempotence réseau restent hors de 2B. Aucune migration n'est
+  nécessaire à cet incrément.
 
 Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
 examiner sa compatibilité et justifier le changement. Les versions

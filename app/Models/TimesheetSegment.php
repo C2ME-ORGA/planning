@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Casts\UtcDateTime;
 use App\Enums\TimeCategory;
 use App\Support\BusinessTime;
+use App\Support\TimesheetMinutePrecision;
 use Carbon\CarbonImmutable;
 use Database\Factories\TimesheetSegmentFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
@@ -65,8 +66,7 @@ class TimesheetSegment extends Model
                 return;
             }
 
-            if ($start->second !== 0 || $end->second !== 0
-                || $start->micro !== 0 || $end->micro !== 0) {
+            if (! TimesheetMinutePrecision::isRespected($start, $end)) {
                 throw new LogicException('Un segment est saisi à la minute, sans seconde ni fraction.');
             }
 
@@ -77,6 +77,19 @@ class TimesheetSegment extends Model
             // L'offset est une projection de l'instant : il ne peut pas diverger.
             $segment->start_offset_minutes = BusinessTime::offsetMinutesAt($start);
             $segment->end_offset_minutes = BusinessTime::offsetMinutesAt($end);
+        });
+
+        // Défense en profondeur : le service d'écriture reste la garantie
+        // principale, mais une suppression directe via le modèle ne doit pas
+        // contourner le verrouillage du relevé.
+        static::deleting(function (TimesheetSegment $segment): void {
+            $timesheet = $segment->timesheet()->first();
+
+            if (! $timesheet instanceof Timesheet || ! $timesheet->status->isEditable()) {
+                throw new LogicException(
+                    'Un segment ne peut être supprimé que sur un relevé en brouillon.',
+                );
+            }
         });
     }
 

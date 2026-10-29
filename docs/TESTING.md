@@ -253,6 +253,83 @@ naïves, le détecteur expose `overlapsForSegment()`/`overlapsForCandidate()` et
 les tests d'auto-chevauchement ont été corrigés. L'incrément 1 n'est pas déclaré
 validé : la validation reste humaine.
 
+## Couverture du 2B des relevés (Lot 5 — saisie et transmission, 29/10/2026)
+
+- `tests/Feature/Timesheets/TimesheetReasonTest.php` : motif facultatif absent
+  ou blanc, nettoyage `trim`, motif obligatoire manquant, 500 caractères
+  acceptés et 501 refusés, texte multioctet, absence de valeur inventée.
+- `tests/Feature/Timesheets/TimesheetReasonAuditTest.php` : la valeur normalisée
+  est acceptée par la policy `reopen` puis enregistrée à l'identique dans
+  `audit_events.reason`, avec un acteur identifié.
+- `tests/Feature/Timesheets/TimesheetCreationServiceTest.php` : ouverture par le
+  propriétaire, normalisation de la semaine au lundi, création par le Bureau
+  pour un salarié sans compte lié, refus d'un autre salarié et de
+  l'Administrateur, retour d'un relevé existant uniquement si l'acteur peut le
+  consulter, absence de doublon, audit `timesheet.created` attribué, rollback si
+  l'audit échoue.
+- `tests/Feature/Timesheets/TimesheetSegmentServiceTest.php` : ajout par le
+  propriétaire et par le Bureau, dérivation des offsets, passage de minuit dans
+  la semaine, dernière minute du dimanche acceptée, début avant la semaine et
+  franchissement de la limite refusés, secondes/fractions, plage inversée et
+  catégorie inconnue refusées, acteur non autorisé, relevé non brouillon, objet
+  périmé revalidé sous verrou, mise à jour auditée, segment d'un autre salarié
+  refusé, suppression auditée, garde de suppression du modèle hors brouillon,
+  rollback si l'audit échoue.
+- `tests/Feature/Timesheets/TimesheetSubmissionServiceTest.php` : transmission
+  valide et audit `timesheet.submitted` attribué, brouillon sans segment refusé,
+  Bureau et chef refusés, salarié sans compte lié refusé, compte inactif refusé,
+  idempotence par état sans second audit, rejeu par un autre compte refusé,
+  aucune écriture de segment après transmission, dernier segment supprimé puis
+  transmission refusée, revalidation de la précision à la minute (secondes non
+  nulles refusées, segment à la minute entière accepté), revalidation des bornes
+  de semaine (segment hors semaine refusé, franchissement dimanche/lundi refusé,
+  segment valide traversant minuit accepté), avertissements de durée et de
+  chevauchement non bloquants consignés dans le contexte, état incompatible
+  refusé, rollback si l'audit échoue.
+- `tests/Feature/Timesheets/TimesheetWeekBoundsTest.php` : bornes UTC des
+  semaines contenant les changements d'heure de mars et d'octobre, acceptation
+  d'un instant valide dans ces semaines, refus d'un instant postérieur à la
+  semaine d'octobre.
+- `tests/Feature/Timesheets/TimesheetActorHistoryTest.php` (étendu) : frontière
+  de cycle par la dernière action `reopened` ou `correction_resumed`, événements
+  de complétude exigés après la frontière, frontière sans acteur refusée,
+  absence de frontière compatible, ancien validateur/réouvertureur non exclu du
+  seul fait de ces actions, `correction_resumed` non traité comme préparation.
+
+Commandes et résultats réels :
+
+```powershell
+php artisan test tests/Feature/Timesheets/TimesheetReasonTest.php tests/Feature/Timesheets/TimesheetReasonAuditTest.php tests/Feature/Timesheets/TimesheetCreationServiceTest.php tests/Feature/Timesheets/TimesheetSegmentServiceTest.php tests/Feature/Timesheets/TimesheetSubmissionServiceTest.php tests/Feature/Timesheets/TimesheetWeekBoundsTest.php
+```
+**51 tests, 51 réussis, 136 assertions.**
+
+```powershell
+php artisan test tests/Feature/Timesheets/TimesheetActorHistoryTest.php
+```
+**11 tests, 11 réussis, 21 assertions** (6 tests/11 assertions en 2A, 5 tests
+ajoutés en 2B).
+
+```powershell
+php artisan test tests/Feature/Timesheets
+```
+**114 tests, 114 réussis, 343 assertions.**
+
+```powershell
+./vendor/bin/pint --test
+./vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+```
+**Pint : passé. Larastan niveau 7 : 0 erreur.**
+
+**Limite de concurrence :** `RefreshDatabase` exécute chaque test dans une
+transaction unique ; une seconde connexion ne voit donc pas les données non
+commitées et un test multi-connexion de verrou de ligne ne peut pas être fiable.
+Aucun test n'est présenté comme une preuve de concurrence multi-processus. Les
+invariants couverts sont : revalidation du statut sous verrou avec un objet
+périmé, sérialisation de la transmission et des écritures de segments par le
+même relevé parent, refus d'écriture après transmission, refus de transmettre
+après suppression du dernier segment, et rollback complet en cas d'échec
+d'audit. Un test multi-processus reste à prévoir si l'infrastructure le permet.
+
 ## Couverture PC1-30 — historique, conflits et mobile
 
 - `tests/Feature/Planning/PlanningHistoryTest.php` : projection autorisée de
