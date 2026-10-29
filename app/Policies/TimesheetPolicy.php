@@ -4,7 +4,6 @@ namespace App\Policies;
 
 use App\Enums\Permission;
 use App\Enums\TimesheetStatus;
-use App\Models\Employee;
 use App\Models\Timesheet;
 use App\Models\User;
 use App\Services\Timesheets\TimesheetActorHistory;
@@ -44,14 +43,33 @@ class TimesheetPolicy
         return $this->isPerimeterController($actor, $timesheet);
     }
 
-    public function create(User $actor, Employee $employee): bool
+    /**
+     * Droit général de création : réservé au Bureau/Direction.
+     *
+     * Gate ne peut pas porter de salarié cible sur cette capacité, donc elle
+     * n'autorise jamais à choisir le salarié. Toute création réelle doit être
+     * autorisée par `createFor()` sur le brouillon cible.
+     */
+    public function create(User $actor): bool
+    {
+        return $actor->hasPermission(Permission::TimesheetValidate);
+    }
+
+    /**
+     * Création d'un brouillon pour un salarié donné.
+     *
+     * Contrat : `Gate::authorize('createFor', $draft)` où `$draft` est un
+     * `Timesheet` non enregistré portant `employee_id`. Le propriétaire est
+     * autorisé par `TimesheetOwn`, le Bureau/Direction par `TimesheetValidate`.
+     */
+    public function createFor(User $actor, Timesheet $timesheet): bool
     {
         if ($actor->hasPermission(Permission::TimesheetValidate)) {
             return true;
         }
 
         return $actor->hasPermission(Permission::TimesheetOwn)
-            && $employee->user_id === $actor->getKey();
+            && $this->isOwner($actor, $timesheet);
     }
 
     public function update(User $actor, Timesheet $timesheet): bool

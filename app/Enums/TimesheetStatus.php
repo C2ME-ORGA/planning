@@ -5,8 +5,9 @@ namespace App\Enums;
 /**
  * États métier d'un relevé d'heures.
  *
- * Le référentiel du Lot 5 ajoute le workflow dans un incrément ultérieur ; cet
- * enum fixe uniquement les valeurs stockées et leurs libellés.
+ * L'enum fixe les valeurs stockées, leurs libellés, la matrice des transitions
+ * autorisées et l'éditabilité. Il n'exécute aucune transition : les services de
+ * workflow des incréments suivants restent seuls responsables de l'écriture.
  */
 enum TimesheetStatus: string
 {

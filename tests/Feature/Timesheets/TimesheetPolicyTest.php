@@ -4,6 +4,7 @@ use App\Enums\AuditAction;
 use App\Enums\Role;
 use App\Enums\TeamAssignmentKind;
 use App\Enums\TimesheetStatus;
+use App\Models\Timesheet;
 use App\Policies\TimesheetPolicy;
 use Illuminate\Support\Facades\Gate;
 use Tests\Support\TimesheetFixtures;
@@ -42,13 +43,27 @@ it('allows viewAny only to timesheet roles', function (): void {
         ->and($this->policy->viewAny(TimesheetFixtures::user(Role::Admin)))->toBeFalse();
 });
 
-it('allows draft creation only to the owner or the Bureau', function (): void {
-    expect($this->policy->create($this->ownerUser, $this->owner))->toBeTrue()
-        ->and($this->policy->create($this->otherUser, $this->owner))->toBeFalse()
-        ->and($this->policy->create($this->chefUser, $this->owner))->toBeFalse()
-        ->and($this->policy->create($this->chefUser, $this->chefEmployee))->toBeTrue()
-        ->and($this->policy->create($this->bureau, $this->owner))->toBeTrue()
-        ->and($this->policy->create(TimesheetFixtures::user(Role::Admin), $this->owner))->toBeFalse();
+it('exposes a Gate-compatible global create ability reserved to the Bureau', function (): void {
+    $admin = TimesheetFixtures::user(Role::Admin);
+
+    expect(Gate::forUser($this->bureau)->allows('create', Timesheet::class))->toBeTrue()
+        ->and(Gate::forUser($this->ownerUser)->allows('create', Timesheet::class))->toBeFalse()
+        ->and(Gate::forUser($this->chefUser)->allows('create', Timesheet::class))->toBeFalse()
+        ->and(Gate::forUser($this->conducteurUser)->allows('create', Timesheet::class))->toBeFalse()
+        ->and(Gate::forUser($admin)->allows('create', Timesheet::class))->toBeFalse();
+});
+
+it('authorizes draft creation for a target employee through createFor', function (): void {
+    $draft = new Timesheet(['employee_id' => $this->owner->getKey()]);
+    $chefDraft = new Timesheet(['employee_id' => $this->chefEmployee->getKey()]);
+    $admin = TimesheetFixtures::user(Role::Admin);
+
+    expect(Gate::forUser($this->ownerUser)->allows('createFor', $draft))->toBeTrue()
+        ->and(Gate::forUser($this->otherUser)->allows('createFor', $draft))->toBeFalse()
+        ->and(Gate::forUser($this->chefUser)->allows('createFor', $draft))->toBeFalse()
+        ->and(Gate::forUser($this->chefUser)->allows('createFor', $chefDraft))->toBeTrue()
+        ->and(Gate::forUser($this->bureau)->allows('createFor', $draft))->toBeTrue()
+        ->and(Gate::forUser($admin)->allows('createFor', $draft))->toBeFalse();
 });
 
 it('allows editing only a draft, by its owner or the Bureau', function (): void {
@@ -59,8 +74,10 @@ it('allows editing only a draft, by its owner or the Bureau', function (): void 
         ->and($this->policy->update($this->chefUser, $draft))->toBeFalse()
         ->and($this->policy->update($this->otherUser, $draft))->toBeFalse();
 
-    foreach ([TimesheetStatus::AControler, TimesheetStatus::ACorriger, TimesheetStatus::PretePourValidation, TimesheetStatus::Validee] as $status) {
-        $locked = TimesheetFixtures::timesheet($this->owner, status: $status);
+    $lockedWeeks = ['2026-11-09', '2026-11-16', '2026-11-23', '2026-11-30'];
+
+    foreach ([TimesheetStatus::AControler, TimesheetStatus::ACorriger, TimesheetStatus::PretePourValidation, TimesheetStatus::Validee] as $index => $status) {
+        $locked = TimesheetFixtures::timesheet($this->owner, week: $lockedWeeks[$index], status: $status);
 
         expect($this->policy->update($this->ownerUser, $locked))->toBeFalse()
             ->and($this->policy->update($this->bureau, $locked))->toBeFalse();
@@ -69,7 +86,7 @@ it('allows editing only a draft, by its owner or the Bureau', function (): void 
 
 it('allows submission only to the owner with at least one segment', function (): void {
     $empty = TimesheetFixtures::timesheet($this->owner);
-    $filled = TimesheetFixtures::timesheet($this->owner);
+    $filled = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09');
     TimesheetFixtures::segment($filled);
 
     expect($this->policy->submit($this->ownerUser, $empty))->toBeFalse()
@@ -92,6 +109,16 @@ it('requires the control perimeter and a reason to return or prepare a timesheet
         ->and($this->policy->requestCorrection($this->bureau, $timesheet, 'Correction demandée'))->toBeTrue()
         ->and($this->policy->markReadyForValidation($this->chefUser, $timesheet, 'Contrôle satisfaisant'))->toBeTrue()
         ->and($this->policy->markReadyForValidation($this->chefUser, $timesheet, ''))->toBeFalse();
+});
+
+it('accepts the control reason through the Gate argument list', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::AControler);
+
+    expect(Gate::forUser($this->chefUser)->allows('requestCorrection', [$timesheet, 'Correction demandée']))->toBeTrue()
+        ->and(Gate::forUser($this->chefUser)->allows('requestCorrection', $timesheet))->toBeFalse()
+        ->and(Gate::forUser($this->chefUser)->allows('markReadyForValidation', [$timesheet, 'Contrôle satisfaisant']))->toBeTrue()
+        ->and(Gate::forUser($this->chefUser)->allows('markReadyForValidation', [$timesheet, str_repeat('a', 501)]))->toBeFalse()
+        ->and(Gate::forUser($this->bureau)->allows('requestCorrection', [$timesheet, '   ']))->toBeFalse();
 });
 
 it('allows a conducteur who leads the team to control', function (): void {
@@ -134,6 +161,16 @@ it('forbids validation by the owner, a preparer, a controller or with incomplete
         ->and($this->policy->validate($this->bureau, $timesheet))->toBeTrue();
 });
 
+it('refuses validation when a required audit event has no actor', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::PretePourValidation);
+
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::auditWithoutActor($timesheet, AuditAction::TimesheetSubmitted);
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetReadyForValidation, $this->chefUser, 'Contrôle satisfaisant');
+
+    expect($this->policy->validate($this->bureau, $timesheet))->toBeFalse();
+});
+
 it('excludes a Bureau user who prepared or controlled the timesheet from validation', function (): void {
     $prepared = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::PretePourValidation);
     TimesheetFixtures::audit($prepared, AuditAction::TimesheetCreated, $this->bureau);
@@ -157,6 +194,13 @@ it('requires the Bureau and a reason to reopen a validated timesheet', function 
         ->and($this->policy->reopen($this->chefUser, $timesheet, 'Réouverture demandée'))->toBeFalse()
         ->and($this->policy->reopen($this->ownerUser, $timesheet, 'Réouverture demandée'))->toBeFalse()
         ->and($this->policy->reopen(TimesheetFixtures::user(Role::Admin), $timesheet, 'Réouverture demandée'))->toBeFalse();
+});
+
+it('requires the reopen reason through the Gate argument list', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::Validee);
+
+    expect(Gate::forUser($this->bureau)->allows('reopen', [$timesheet, 'Réouverture demandée']))->toBeTrue()
+        ->and(Gate::forUser($this->bureau)->allows('reopen', $timesheet))->toBeFalse();
 });
 
 it('never allows physical deletion', function (): void {

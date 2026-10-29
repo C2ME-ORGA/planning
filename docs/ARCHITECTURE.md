@@ -213,6 +213,25 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   sert de droit global Bureau pour la gestion, sans conférer la transmission
   (réservée au salarié propriétaire via `TimesheetOwn`), la réouverture
   (`WorkflowReopen`) ni l'audit (`AuditView`).
+- **Contrat Gate de création** : `create(User $actor): bool` est la capacité
+  globale, appelable telle quelle (`Gate::allows('create', Timesheet::class)`).
+  Elle n'exprime que le droit général de créer un relevé (Bureau/Direction) et
+  ne porte aucune cible, donc elle n'autorise jamais à choisir le salarié.
+  Toute création réelle passe par `createFor(User $actor, Timesheet
+  $timesheet): bool`, appelée avec un brouillon non enregistré portant
+  `employee_id` : `Gate::authorize('createFor', $draft)`. Le propriétaire est
+  autorisé par `TimesheetOwn`, le Bureau/Direction par `TimesheetValidate`.
+  Ne jamais invoquer `create` avec un `Employee` : Gate résoudrait alors
+  `EmployeePolicy` et contournerait la policy du relevé.
+- **Contrat Gate des motifs** : `requestCorrection()` (retour pour correction),
+  `markReadyForValidation()` et `reopen()` exigent un motif et le reçoivent via
+  la liste d'arguments de Gate :
+  `Gate::authorize('requestCorrection', [$timesheet, $reason])`,
+  `Gate::authorize('markReadyForValidation', [$timesheet, $reason])`,
+  `Gate::authorize('reopen', [$timesheet, $reason])`. Appeler la capacité avec
+  le seul `$timesheet` passe `$reason = null` et doit être refusé : c'est le
+  comportement attendu, pas un défaut à contourner. La vérification du motif
+  (non vide, longueur bornée) reste obligatoire côté serveur.
 - **Périmètre** : `App\Services\Timesheets\TimesheetPerimeter` calcule les
   responsables admissibles à partir des `team_assignments` et
   `team_leaderships` historisés. Les affectations principales et temporaires
@@ -222,13 +241,39 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   couverte. Tous les responsables admissibles le sont sans priorité.
 - **Séparation des tâches** : `App\Services\Timesheets\TimesheetActorHistory`
   lit les événements `timesheet.created`, `timesheet.updated`,
-  `timesheet.returned_for_correction` et `timesheet.ready_for_validation`.
+  `timesheet.submitted`, `timesheet.returned_for_correction` et
+  `timesheet.ready_for_validation`.
   `TimesheetPolicy::validate()` refuse le propriétaire, un préparateur, un
-  contrôleur, et exige une piste d'audit complète. `ApprovalRules` ne doit pas
-  être utilisé seul, car il autorise encore l'auto-validation Bureau.
+  contrôleur, et exige une piste d'audit complète. Une piste n'est complète que
+  si chaque événement requis porte un `actor_id` non nul : un événement non
+  attribué (console, job) ne prouve jamais la traçabilité et fait refuser la
+  validation. `ApprovalRules` ne doit pas être utilisé seul, car il autorise
+  encore l'auto-validation Bureau.
   **Limite :** la règle dépend de l'émission exhaustive des événements par les
-  incréments 2B à 2E ; une piste incomplète est refusée, jamais interprétée
-  comme une absence de participation.
+  incréments 2B à 2E ; une piste incomplète ou non attribuable est refusée,
+  jamais interprétée comme une absence de participation. Aucun acteur n'est
+  inventé pour les événements générés hors requête utilisateur.
+- **Validateurs disponibles** : aucun nombre minimal de comptes
+  Bureau/Direction n'est imposé par le système. Un acteur qui a préparé ou
+  contrôlé un relevé ne peut pas le valider lui-même. Si l'unique compte
+  Bureau/Direction disponible a préparé ou contrôlé le relevé, celui-ci reste
+  en attente jusqu'à l'intervention d'un second acteur habilité
+  (`TimesheetValidate`). Ce délai est un risque opérationnel accepté : il doit
+  être anticipé par l'organisation.
+- **Verrouillage des segments** : l'édition d'un relevé n'est autorisée que sur
+  un `Brouillon`. Toute future création ou modification de segment
+  (incrément 2B) devra respecter la même règle et être autorisée côté serveur
+  via la policy du relevé concerné, sur le relevé réellement chargé ; les
+  services à venir ne doivent jamais s'appuyer sur la seule interface ni sur un
+  identifiant fourni par le client.
+- **Portée de l'autorisation de transmettre** : la policy ne vérifie que
+  l'existence d'au moins un segment. Elle n'établit pas la complétude métier du
+  relevé. Les règles de complétude relèvent des incréments 2B/2C et ne sont pas
+  arbitrées ici.
+- **Séparation autorisation / complétude / exécution** : l'autorisation de
+  transmettre, la validation du contenu et de la complétude, et l'exécution
+  réelle de la transmission sont trois étapes distinctes. Aucune transmission
+  n'est exécutée en 2A ; elle sera implémentée dans un incrément ultérieur.
 - **Hors périmètre de 2A** : aucun service de brouillon, transmission,
   contrôle, validation ou réouverture, aucune migration, aucune interface.
 

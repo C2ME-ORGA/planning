@@ -53,8 +53,16 @@ it('requires the ready-for-validation event for a timesheet in that status', fun
 });
 
 it('ignores audit events attached to another timesheet', function (): void {
-    $other = TimesheetFixtures::timesheet($this->owner);
+    $other = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09');
     TimesheetFixtures::audit($other, AuditAction::TimesheetCreated, $this->bureau);
 
     expect($this->history->isPreparedBy($this->bureau, $this->timesheet))->toBeFalse();
+});
+
+it('does not treat an unattributed event as a complete trail', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::auditWithoutActor($this->timesheet, AuditAction::TimesheetSubmitted);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
 });

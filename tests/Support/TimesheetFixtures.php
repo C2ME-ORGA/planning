@@ -16,6 +16,8 @@ use App\Models\TimesheetSegment;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use Carbon\CarbonImmutable;
+use Illuminate\Support\Facades\Auth;
+use LogicException;
 
 /**
  * Fixtures minimales pour les autorisations et le périmètre des relevés.
@@ -72,6 +74,20 @@ final class TimesheetFixtures
         string $week = '2026-11-02',
         TimesheetStatus $status = TimesheetStatus::Brouillon,
     ): Timesheet {
+        $periodStart = Timesheet::weekFor($week)['start']->toDateString();
+
+        // La base impose un seul relevé par salarié et par semaine : échouer
+        // ici rend l'erreur de fixture explicite au lieu d'une violation SQL.
+        if (Timesheet::query()
+            ->where('employee_id', $employee->getKey())
+            ->where('period_start', $periodStart)
+            ->exists()) {
+            throw new LogicException(sprintf(
+                'Un relevé existe déjà pour ce salarié sur la semaine du %s.',
+                $periodStart,
+            ));
+        }
+
         return Timesheet::factory()->for($employee)->forWeekOf($week)->create([
             'status' => $status,
         ]);
@@ -97,5 +113,27 @@ final class TimesheetFixtures
         ?string $reason = null,
     ): void {
         app(AuditLogger::class)->record($action, $timesheet, [], $reason, $actor);
+    }
+
+    /**
+     * Événement sans acteur, comme ceux émis en console ou par un job.
+     * Il ne doit jamais suffire à établir la traçabilité d'un relevé.
+     *
+     * `AuditLogger` complète un acteur absent par l'utilisateur authentifié :
+     * l'absence d'authentification est donc vérifiée pour que le test mesure
+     * bien un événement non attribué.
+     */
+    public static function auditWithoutActor(
+        Timesheet $timesheet,
+        AuditAction $action,
+        ?string $reason = null,
+    ): void {
+        if (Auth::check()) {
+            throw new LogicException(
+                'Un utilisateur est authentifié : l’événement serait attribué.',
+            );
+        }
+
+        app(AuditLogger::class)->record($action, $timesheet, [], $reason);
     }
 }

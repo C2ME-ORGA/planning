@@ -13,8 +13,9 @@ use App\Models\User;
  *
  * Aucun service de workflow n'écrit encore ces événements : la règle dépend de
  * l'émission exhaustive des actions `timesheet.*` par les incréments suivants.
- * Une piste d'audit incomplète n'est jamais interprétée comme la preuve qu'un
- * utilisateur n'a pas participé ; la validation est alors refusée.
+ * Une piste d'audit incomplète ou non attribuable n'est jamais interprétée
+ * comme la preuve qu'un utilisateur n'a pas participé : la validation est
+ * alors refusée. Un événement sans acteur (console, job) ne prouve rien.
  */
 final class TimesheetActorHistory
 {
@@ -51,21 +52,22 @@ final class TimesheetActorHistory
     }
 
     /**
-     * Une piste est complète si la création et la transmission sont auditées,
-     * et, pour un relevé prêt à valider, si le contrôle satisfaisant l'est aussi.
+     * Une piste est complète si la création, la transmission et, le cas
+     * échéant, le contrôle satisfaisant sont audités **avec un acteur
+     * identifiable**. Un événement `actor_id = null` ne suffit jamais.
      */
     public function hasCompleteTrail(Timesheet $timesheet): bool
     {
-        if (! $this->hasAuditAction($timesheet, AuditAction::TimesheetCreated->value)) {
+        if (! $this->hasAttributedAction($timesheet, AuditAction::TimesheetCreated->value)) {
             return false;
         }
 
-        if (! $this->hasAuditAction($timesheet, AuditAction::TimesheetSubmitted->value)) {
+        if (! $this->hasAttributedAction($timesheet, AuditAction::TimesheetSubmitted->value)) {
             return false;
         }
 
         if ($timesheet->status === TimesheetStatus::PretePourValidation
-            && ! $this->hasAuditAction($timesheet, AuditAction::TimesheetReadyForValidation->value)) {
+            && ! $this->hasAttributedAction($timesheet, AuditAction::TimesheetReadyForValidation->value)) {
             return false;
         }
 
@@ -85,12 +87,13 @@ final class TimesheetActorHistory
             ->exists();
     }
 
-    private function hasAuditAction(Timesheet $timesheet, string $action): bool
+    private function hasAttributedAction(Timesheet $timesheet, string $action): bool
     {
         return AuditEvent::query()
             ->where('subject_type', Timesheet::class)
             ->where('subject_id', (string) $timesheet->getKey())
             ->where('action', $action)
+            ->whereNotNull('actor_id')
             ->exists();
     }
 }
