@@ -209,3 +209,10 @@ réauthentifier, 2FA comprise.
   (5 secondes par défaut). L'ordre est équipe puis salariés triés par
   identifiant. Une attente dépassée refuse l'écriture, elle ne la valide pas.
 - Le lot 3 attend la validation humaine avant toute suite.
+
+
+## 6. Connexion des utilisateurs terrain
+
+Les ouvriers, chefs d'équipe et conducteurs de travaux utilisent `/login`, puis sont dirigés vers le planning mobile `/planning`. Le compte doit être actif et avoir terminé son activation. La connexion au panneau d'administration reste distincte sur `/admin/login` et demeure réservée aux rôles Administrateur et Bureau / Direction avec 2FA obligatoire.
+
+En cas d'échec de connexion, vérifier l'adresse e-mail, le mot de passe et l'état d'activation du compte dans `/admin/users`. Ne pas promouvoir un compte terrain en Bureau / Direction pour contourner le contrôle d'accès.
