@@ -174,6 +174,26 @@ it('is idempotent on an already submitted timesheet', function (): void {
         ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSubmitted->value)->count())->toBe(1);
 });
 
+it('returns an already submitted timesheet without replaying content checks', function (): void {
+    $submitted = TimesheetFixtures::timesheet(
+        $this->owner,
+        week: '2026-11-09',
+        status: TimesheetStatus::AControler,
+    );
+
+    TimesheetFixtures::segment(
+        $submitted,
+        start: '2026-11-08 23:00:00',
+        end: '2026-11-09 01:00:00',
+    );
+
+    $again = $this->service->submit($submitted, $this->ownerUser);
+
+    expect($again->status)->toBe(TimesheetStatus::AControler)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSubmitted->value)->count())->toBe(0)
+        ->and(TimesheetSegment::query()->where('timesheet_id', $submitted->getKey())->count())->toBe(1);
+});
+
 it('does not treat a submission retry by another account as idempotent success', function (): void {
     TimesheetFixtures::segment($this->timesheet);
     $this->service->submit($this->timesheet, $this->ownerUser);

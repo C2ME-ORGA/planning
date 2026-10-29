@@ -321,7 +321,9 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   les bornes de semaine de chaque segment existant, reste non bloquante pour
   les avertissements de chevauchement et de durée supérieure à 720 minutes, et
   est idempotente par état : un relevé déjà `À contrôler` est retourné sans
-  nouvel événement. Aucune clé d'idempotence réseau n'est introduite (Lot 10).
+  nouvel événement ; ce retour ne rejoue pas les contrôles de contenu et
+  n'écrit ni transition ni audit. Aucune clé d'idempotence réseau n'est
+  introduite (Lot 10).
 - **Audit des segments** : les ajouts, modifications et suppressions réutilisent
   `timesheet.updated`. L'événement porte `operation`, l'identifiant du segment,
   les champs modifiés et les valeurs utiles (catégorie, instants UTC). Une
@@ -346,8 +348,10 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   verrouillée, puis seulement lire la piste d'audit et vérifier la complétude
   du cycle courant. La transition et l'événement `timesheet.validated` devront
   être écrits dans la même transaction. L'ordre de verrouillage reste relevé
-  parent puis segment, comme en 2B. Aucun service de validation, de contrôle ou
-  de réouverture n'est implémenté dans 2B.
+  parent puis segment, comme en 2B. Le service appliquera les exclusions
+  existantes (propriétaire, préparateur, contrôleurs) et n'ajoutera aucune
+  exclusion automatique des validateurs ou réouvreurs précédents. Aucun service
+  de validation, de contrôle ou de réouverture n'est implémenté dans 2B.
 - **Garde de suppression** : `TimesheetSegment::deleting` refuse la suppression
   hors brouillon en défense en profondeur. Le service reste l'autorité
   principale. Limite : les suppressions de masse Eloquent

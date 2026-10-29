@@ -278,7 +278,9 @@ validé : la validation reste humaine.
 - `tests/Feature/Timesheets/TimesheetSubmissionServiceTest.php` : transmission
   valide et audit `timesheet.submitted` attribué, brouillon sans segment refusé,
   Bureau et chef refusés, salarié sans compte lié refusé, compte inactif refusé,
-  idempotence par état sans second audit, rejeu par un autre compte refusé,
+  idempotence par état sans second audit, retour d'un relevé déjà transmis
+  même si ses segments sont incohérents (sans transition ni audit), rejeu par
+  un autre compte refusé,
   aucune écriture de segment après transmission, dernier segment supprimé puis
   transmission refusée, revalidation de la précision à la minute (secondes non
   nulles refusées, segment à la minute entière accepté), revalidation des bornes
@@ -301,7 +303,7 @@ Commandes et résultats réels :
 ```powershell
 php artisan test tests/Feature/Timesheets/TimesheetReasonTest.php tests/Feature/Timesheets/TimesheetReasonAuditTest.php tests/Feature/Timesheets/TimesheetCreationServiceTest.php tests/Feature/Timesheets/TimesheetSegmentServiceTest.php tests/Feature/Timesheets/TimesheetSubmissionServiceTest.php tests/Feature/Timesheets/TimesheetWeekBoundsTest.php
 ```
-**51 tests, 51 réussis, 136 assertions.**
+**52 tests, 52 réussis, 139 assertions.**
 
 ```powershell
 php artisan test tests/Feature/Timesheets/TimesheetActorHistoryTest.php
@@ -312,7 +314,7 @@ ajoutés en 2B).
 ```powershell
 php artisan test tests/Feature/Timesheets
 ```
-**114 tests, 114 réussis, 343 assertions.**
+**115 tests, 115 réussis, 346 assertions.**
 
 ```powershell
 ./vendor/bin/pint --test
