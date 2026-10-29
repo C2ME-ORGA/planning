@@ -333,6 +333,61 @@ après suppression du dernier segment, et rollback complet en cas d'échec
 d'audit. Un test multi-processus reste à prévoir si l'infrastructure le permet.
 Un test d'intégration dédié, hors `RefreshDatabase`, pourra utiliser deux connexions MySQL sur des données commitées pour vérifier le comportement du verrouillage du relevé parent : une opération concurrente doit attendre la libération du verrou ou échouer si le délai d'attente est dépassé (`innodb_lock_wait_timeout`). Ce test permettra de vérifier la sérialisation des accès via InnoDB, sans constituer pour autant une preuve de concurrence multi-processus sur l'ensemble du workflow.
 
+## Couverture du 2C — contrôle et validation des relevés (Lot 5, 29/10/2026)
+
+- `tests/Feature/Timesheets/TimesheetControlServiceTest.php` : retour en
+  correction par le chef de périmètre et le Bureau, motif normalisé et audité,
+  refus du propriétaire et d'un chef hors périmètre, motif absent/blanc/trop
+  long, statut incompatible, répétition sans second événement, rollback si
+  l'audit échoue ; un acteur non habilité avec un motif invalide reçoit un
+  refus d'autorisation, pas une erreur de validation ; reprise de correction
+  par le propriétaire et le Bureau, refus des autres acteurs, répétition et
+  rollback ; préparation à la validation avec motif, refus sans motif ou hors
+  périmètre, répétition et rollback.
+- `tests/Feature/Timesheets/TimesheetValidationServiceTest.php` : validation
+  finale par un Bureau avec piste complète et événement attribué, refus si la
+  piste est incomplète, rôle insuffisant, propriétaire, préparateur, contrôleur
+  ou statut incompatible, répétition sans second événement et rollback ; refus
+  de valider lorsque les seuls événements de complétude sont antérieurs à la
+  dernière frontière ; réouverture motivée avec motif normalisé, refus d'un
+  motif invalide, d'un statut incompatible ou d'un acteur non habilité (même
+  avec un motif invalide), répétition et rollback ; édition des segments à
+  nouveau possible après réouverture ; parcours complet création → segment →
+  transmission → contrôle → validation ; nouveau cycle complet après
+  réouverture ; nouveau cycle après retour en correction et reprise, avec
+  nouvelle transmission et nouveau contrôle.
+- `tests/Feature/Timesheets/TimesheetActorHistoryTest.php` (étendu) : la
+  création reste l'origine globale du relevé, sans nouvel événement fabriqué
+  après une frontière ; un contrôle antérieur à la dernière transmission du
+  cycle est refusé ; chaque cycle exige une nouvelle transmission attribuée
+  puis un nouveau contrôle attribué, y compris sur plusieurs cycles successifs ;
+  la dernière transmission est retenue lorsqu'il en existe plusieurs, et
+  plusieurs contrôles sont acceptés si l'un suit cette transmission ; toute
+  frontière de cycle sans acteur, même antérieure à la dernière, bloque la
+  validation.
+
+Commandes et résultats réels :
+
+```powershell
+php artisan test tests/Feature/Timesheets/TimesheetControlServiceTest.php tests/Feature/Timesheets/TimesheetValidationServiceTest.php
+```
+**35 tests, 35 réussis, 117 assertions.**
+
+```powershell
+php artisan test tests/Feature/Timesheets
+```
+**155 tests, 155 réussis, 476 assertions.**
+
+```powershell
+php artisan test
+```
+**444 tests, 443 réussis, 1 ignoré, 2480 assertions.** Le test ignoré est le
+test de lien symbolique Windows déjà présent.
+
+Pint et Larastan (niveau 7) sont verts. Les tests restent séquentiels : la
+limite de concurrence multi-processus décrite pour le 2B s'applique également
+aux transitions de contrôle et de validation.
+
 ## Couverture PC1-30 — historique, conflits et mobile
 
 - `tests/Feature/Planning/PlanningHistoryTest.php` : projection autorisée de

@@ -53,7 +53,7 @@ it('creates an account without a known password and sends a single-use activatio
     $this->post('/activation/'.$token, [
         'password' => 'Str0ng-Passw0rd!',
         'password_confirmation' => 'Str0ng-Passw0rd!',
-    ])->assertRedirect('/admin/login');
+    ])->assertRedirect('/login');
 
     $user->refresh();
 

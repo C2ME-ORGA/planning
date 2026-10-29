@@ -79,3 +79,12 @@
 
 ## Points restant à confirmer
 Durées de conservation applicables, information des salariés et base légale, gestion des clés de chiffrement client, RPO/RTO, calendrier de restauration et exigences du prestataire d’hébergement doivent être validés avant production.
+
+
+## Authentification des utilisateurs terrain (PC1-33)
+
+- Les rôles `ouvrier`, `chef_equipe` et `conducteur_travaux` se connectent via `/login`, avec le garde de session `web`.
+- Une connexion terrain exige un compte actif et effectivement activé (`activated_at` non nul). Les identifiants invalides, comptes désactivés et comptes non activés produisent un message générique.
+- La connexion renouvelle l'identifiant de session ; la déconnexion invalide la session et renouvelle le jeton CSRF.
+- Le panneau Filament `/admin` reste exclusivement réservé aux rôles `administrateur` et `bureau_direction`, avec 2FA obligatoire. La connexion terrain ne modifie ni `canAccessPanel()` ni la matrice des permissions métier.
+- Aucune inscription libre ni connexion automatique après activation n'est autorisée. Le lien d'activation redirige vers le point de connexion correspondant au rôle du compte.
