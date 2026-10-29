@@ -250,9 +250,9 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   validation. `ApprovalRules` ne doit pas être utilisé seul, car il autorise
   encore l'auto-validation Bureau.
   **Limite :** la règle dépend de l'émission exhaustive des événements par les
-  incréments 2B à 2E ; 2B émet déjà `created` et `submitted`, les événements de
-  contrôle et de validation restant à venir. Une piste incomplète ou non
-  attribuable est refusée, jamais interprétée comme une absence de
+  services métier : 2B émet `created`, `updated` et `submitted`, 2C émet les
+  événements de contrôle, de validation et de réouverture. Une piste incomplète
+  ou non attribuable est refusée, jamais interprétée comme une absence de
   participation. Aucun acteur n'est inventé pour les événements générés hors
   requête utilisateur.
 - **Validateurs disponibles** : aucun nombre minimal de comptes
@@ -336,24 +336,31 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
 - **Cycle d'audit** : `TimesheetActorHistory` borne les événements de
   complétude (`submitted`, `ready_for_validation`) après la dernière action
   `timesheet.reopened` ou `timesheet.correction_resumed`, identifiée par la
-  séquence du journal et non par `occurred_at`. La création reste exigée
-  globalement. Un événement de frontière sans acteur rend la validation
-  impossible. Les exclusions de propriété, de préparation et de contrôle
-  restent globales, tous cycles confondus : un ancien validateur ou
-  réouvertureur n'est pas exclu du seul fait de ces actions, et
-  `correction_resumed` n'est pas une action de préparation.
-- **Contrat de verrouillage pour la validation (2C)** : le futur service de
-  validation devra ouvrir une transaction, verrouiller le relevé parent avec
-  `lockForUpdate()`, revalider les autorisations et le statut sur l'instance
-  verrouillée, puis seulement lire la piste d'audit et vérifier la complétude
-  du cycle courant. La transition et l'événement `timesheet.validated` devront
-  être écrits dans la même transaction. L'ordre de verrouillage reste relevé
-  parent puis segment, comme en 2B. Le service appliquera les exclusions
-  existantes (propriétaire, préparateur, contrôleurs) et n'ajoutera aucune
-  exclusion automatique des validateurs ou réouvreurs précédents. Il refusera
-  la validation si la piste requise est incomplète ou non attribuable, et lira
-  l'historique sous le même verrou que la décision de transition. Aucun service
-  de validation, de contrôle ou de réouverture n'est implémenté dans 2B.
+  séquence du journal et non par `occurred_at`. La création atteste l'origine
+  du relevé et reste exigée globalement : aucun nouvel événement `created`
+  n'est fabriqué lors d'une réouverture ou d'une reprise. La transmission et la
+  préparation à la validation doivent être postérieures à la frontière ; la
+  préparation doit en outre suivre la dernière transmission du cycle. Lorsque
+  plusieurs transmissions existent dans un même cycle (historique incohérent),
+  la dernière est retenue et seul un contrôle postérieur à celle-ci complète le
+  cycle ; plusieurs contrôles sont acceptés si l'un d'eux suit cette
+  transmission. Toute frontière de cycle sans acteur — pas seulement la
+  dernière — rend la validation impossible. Les exclusions de propriété, de
+  préparation et de contrôle restent globales, tous cycles confondus : un
+  ancien validateur ou réouvertureur n'est pas exclu du seul fait de ces
+  actions, et `correction_resumed` n'est pas une action de préparation.
+- **Contrat de verrouillage pour la validation (2C)** : le service
+  `TimesheetValidationService` ouvre une transaction, verrouille le relevé
+  parent avec `lockForUpdate()`, revalide les autorisations et le statut sur
+  l'instance verrouillée, puis lit la piste d'audit et vérifie la complétude du
+  cycle courant. La transition et l'événement `timesheet.validated` sont écrits
+  dans la même transaction. L'ordre de verrouillage reste relevé parent puis
+  segment, comme en 2B. Le service applique les exclusions existantes
+  (propriétaire, préparateur, contrôleurs) et n'ajoute aucune exclusion
+  automatique des validateurs ou réouvreurs précédents. Il refuse la validation
+  si la piste requise est incomplète ou non attribuable. Le contrôle et la
+  réouverture suivent le même modèle dans `TimesheetControlService` et
+  `TimesheetValidationService` (§3.6).
 - **Garde de suppression** : `TimesheetSegment::deleting` refuse la suppression
   hors brouillon en défense en profondeur. Le service reste l'autorité
   principale. Limite : les suppressions de masse Eloquent
@@ -365,6 +372,43 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   correction, la validation finale, la réouverture, le contrôle groupé,
   l'interface et l'idempotence réseau restent hors de 2B. Aucune migration n'est
   nécessaire à cet incrément.
+
+### 3.6 Contrôle, correction et validation (Lot 5, incrément 2C)
+
+- **Services** : `TimesheetControlService` gère le retour en correction
+  (`requestCorrection`, motif obligatoire), la reprise (`resumeCorrection`) et
+  la préparation à la validation (`markReadyForValidation`, motif obligatoire).
+  `TimesheetValidationService` gère la validation finale (`validate`) et la
+  réouverture motivée (`reopen`).
+- **Transitions** : seules celles de `TimesheetStatus` sont exécutées :
+  `À contrôler → À corriger`, `À corriger → Brouillon`,
+  `À contrôler → Prête pour validation`, `Prête pour validation → Validée` et
+  `Validée → Brouillon`. Aucune autre transition n'est acceptée.
+- **Autorisations et séparation** : chaque service verrouille le relevé parent
+  avec `lockForUpdate()`, recharge son statut, puis appelle la policy sur
+  l'instance verrouillée. Le contrôle exige `timesheet.validate` ou le périmètre
+  historique ; la validation finale reste réservée à `timesheet.validate` et
+  refuse le propriétaire, un préparateur et un contrôleur ; la réouverture
+  exige `timesheet.validate` et `workflow.reopen`. Les anciens validateurs ou
+  réouvertureurs ne sont pas exclus du seul fait de ces actions.
+- **Motifs** : les motifs de retour en correction, de préparation à la
+  validation et de réouverture sont normalisés une seule fois par
+  `TimesheetReason` ; la même valeur sert à l'autorisation et à
+  `audit_events.reason`. Les transitions sans motif obligatoire n'en inventent
+  aucun. L'autorisation est vérifiée avant le contenu du motif : un acteur non
+  habilité reçoit un refus d'autorisation, jamais une erreur de validation
+  métier.
+- **Audit et atomicité** : chaque transition écrit son événement dans la même
+  transaction que le changement de statut :
+  `timesheet.returned_for_correction`, `timesheet.correction_resumed`,
+  `timesheet.ready_for_validation`, `timesheet.validated` et
+  `timesheet.reopened`. Une erreur d'audit annule la transition.
+- **Répétition** : une requête répétée est refusée par la matrice d'états et ne
+  crée ni transition ni événement. Seule la transmission reste idempotente par
+  état (voir §3.5), sans clé d'idempotence réseau.
+- **Reporté** : le contrôle groupé, les tableaux de bord et l'interface restent
+  hors périmètre de 2C. Le motif obligatoire d'une journée attendue sans heure
+  reste différé au Lot 7. Aucune migration n'est nécessaire.
 
 Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
 examiner sa compatibilité et justifier le changement. Les versions

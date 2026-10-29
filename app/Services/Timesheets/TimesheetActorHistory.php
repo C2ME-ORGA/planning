@@ -14,9 +14,9 @@ use Illuminate\Database\Eloquent\Builder;
  *
  * L'incrément 2B écrit `created`, `updated` et `submitted` lors de la
  * création d'un relevé, de l'édition de ses segments et de sa transmission.
- * Le contrôle, la validation et la réouverture restent hors périmètre : la
- * piste dépendra de l'émission exhaustive de leurs événements par les
- * incréments suivants.
+ * L'incrément 2C écrit `returned_for_correction`, `correction_resumed`,
+ * `ready_for_validation`, `validated` et `reopened` : la piste requise est
+ * émise par les services métier de contrôle et de validation.
  * Une piste d'audit incomplète ou non attribuable n'est jamais interprétée
  * comme la preuve qu'un utilisateur n'a pas participé : la validation est
  * alors refusée. Un événement sans acteur (console, job) ne prouve rien.
@@ -66,38 +66,46 @@ final class TimesheetActorHistory
      * Une piste est complète si la création, la transmission et, le cas
      * échéant, le contrôle satisfaisant sont audités **avec un acteur
      * identifiable**, et si les événements de complétude appartiennent au
-     * cycle courant. Un événement `actor_id = null` ne suffit jamais, y
-     * compris pour l'événement de frontière.
+     * cycle courant. La création atteste l'origine du relevé, pas d'un cycle :
+     * elle reste exigée globalement. La transmission et la préparation à la
+     * validation doivent être postérieures à la dernière frontière, et la
+     * préparation doit suivre la transmission du cycle. Un événement
+     * `actor_id = null` ne suffit jamais, y compris pour toute frontière de
+     * cycle.
      */
     public function hasCompleteTrail(Timesheet $timesheet): bool
     {
-        $boundary = $this->latestCycleBoundary($timesheet);
-
-        if ($boundary instanceof AuditEvent && $boundary->actor_id === null) {
+        if ($this->hasUnattributedCycleBoundary($timesheet)) {
             return false;
         }
 
+        $boundary = $this->latestCycleBoundary($timesheet);
         $boundarySequence = $boundary?->sequence;
 
         if (! $this->hasAttributedAction($timesheet, AuditAction::TimesheetCreated->value)) {
             return false;
         }
 
-        if (! $this->hasAttributedActionAfter(
+        $submittedSequence = $this->latestAttributedSequence(
             $timesheet,
             AuditAction::TimesheetSubmitted->value,
             $boundarySequence,
-        )) {
+        );
+
+        if ($submittedSequence === null) {
             return false;
         }
 
-        if ($timesheet->status === TimesheetStatus::PretePourValidation
-            && ! $this->hasAttributedActionAfter(
+        if ($timesheet->status === TimesheetStatus::PretePourValidation) {
+            $readySequence = $this->latestAttributedSequence(
                 $timesheet,
                 AuditAction::TimesheetReadyForValidation->value,
                 $boundarySequence,
-            )) {
-            return false;
+            );
+
+            if ($readySequence === null || $readySequence <= $submittedSequence) {
+                return false;
+            }
         }
 
         return true;
@@ -124,16 +132,18 @@ final class TimesheetActorHistory
             ->exists();
     }
 
-    private function hasAttributedActionAfter(Timesheet $timesheet, string $action, ?int $sequence): bool
+    private function latestAttributedSequence(Timesheet $timesheet, string $action, ?int $after): ?int
     {
-        return $this->baseQuery($timesheet)
+        $sequence = $this->baseQuery($timesheet)
             ->where('action', $action)
             ->whereNotNull('actor_id')
             ->when(
-                $sequence !== null,
-                static fn (Builder $query): Builder => $query->where('sequence', '>', $sequence),
+                $after !== null,
+                static fn (Builder $query): Builder => $query->where('sequence', '>', $after),
             )
-            ->exists();
+            ->max('sequence');
+
+        return $sequence === null ? null : (int) $sequence;
     }
 
     private function latestCycleBoundary(Timesheet $timesheet): ?AuditEvent
@@ -145,6 +155,22 @@ final class TimesheetActorHistory
             ])
             ->orderByDesc('sequence')
             ->first();
+    }
+
+    /**
+     * Toute frontière de cycle doit être attribuée, pas seulement la dernière :
+     * une réouverture ou une reprise non traçable laisse un trou dans
+     * l'historique et interdit la validation des cycles suivants.
+     */
+    private function hasUnattributedCycleBoundary(Timesheet $timesheet): bool
+    {
+        return $this->baseQuery($timesheet)
+            ->whereIn('action', [
+                AuditAction::TimesheetReopened->value,
+                AuditAction::TimesheetCorrectionResumed->value,
+            ])
+            ->whereNull('actor_id')
+            ->exists();
     }
 
     /**

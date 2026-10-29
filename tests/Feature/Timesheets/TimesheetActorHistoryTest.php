@@ -114,6 +114,89 @@ it('refuses a cycle boundary without an actor', function (): void {
     expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
 });
 
+it('refuses a cycle whose control precedes the latest submission', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+});
+
+it('requires a new attributed submission and control for each cycle', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeTrue();
+
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReopened, $this->bureau, 'Réouverture demandée');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeTrue();
+
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCorrectionResumed, $this->ownerUser);
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+
+    // Un contrôle seul ne suffit pas : il doit suivre une nouvelle transmission.
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeTrue();
+});
+
+it('refuses validation when any earlier cycle boundary has no actor', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    TimesheetFixtures::auditWithoutActor($this->timesheet, AuditAction::TimesheetReopened, 'Réouverture demandée');
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReopened, $this->bureau, 'Réouverture demandée');
+
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+});
+
+it('uses the latest submission of the cycle to pair the control', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeTrue();
+
+    // Une transmission plus récente sans nouveau contrôle invalide le cycle.
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+
+    // Un contrôle postérieur à cette dernière transmission rétablit la piste.
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeTrue();
+});
+
+it('accepts several control events after the retained submission', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReadyForValidation, $this->chef, 'Contrôle satisfaisant');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeTrue();
+});
+
 it('does not exclude an actor only because they validated or reopened', function (): void {
     TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetValidated, $this->bureau);
     TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReopened, $this->bureau, 'Réouverture demandée');
