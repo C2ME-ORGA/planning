@@ -50,6 +50,7 @@ class ApprovalRules
 
     /**
      * @throws RuntimeException
+     * @throws ValidationException
      */
     public function recordSelfApproval(User $actor, int $ownerId, Model $subject, string $reason): AuditEvent
     {
@@ -65,19 +66,7 @@ class ApprovalRules
             throw new RuntimeException('L’auto-validation est réservée au Bureau / à la Direction.');
         }
 
-        try {
-            $normalizedReason = TimesheetReason::required($reason);
-        } catch (ValidationException $exception) {
-            throw new RuntimeException(
-                sprintf(
-                    'Un motif valide de %d à %d caractères est requis pour une auto-validation.',
-                    TimesheetReason::MIN_LENGTH,
-                    TimesheetReason::MAX_LENGTH,
-                ),
-                0,
-                $exception,
-            );
-        }
+        $normalizedReason = TimesheetReason::required($reason);
 
         return $this->audit->record(
             AuditAction::SelfApprovalRecorded,

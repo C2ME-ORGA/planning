@@ -10,6 +10,7 @@ use App\Models\TimesheetSegment;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use App\Support\TimesheetReason;
+use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -33,7 +34,6 @@ final class TimesheetOverlapReviewService
 {
     public function __construct(
         private readonly AuditLogger $audit,
-        private readonly TimesheetOverlapDetector $detector,
         private readonly TimesheetActorHistory $history,
     ) {}
 
@@ -52,44 +52,87 @@ final class TimesheetOverlapReviewService
      */
     public function overlapsFor(Timesheet $timesheet): array
     {
+        $pairs = $this->overlappingPairIds($timesheet);
+
+        if ($pairs === []) {
+            return [];
+        }
+
+        $segmentIds = [];
+
+        foreach ($pairs as [$firstId, $secondId]) {
+            $segmentIds[] = $firstId;
+            $segmentIds[] = $secondId;
+        }
+
+        /** @var Collection<int, TimesheetSegment> $segments */
+        $segments = TimesheetSegment::query()
+            ->whereKey(array_values(array_unique($segmentIds)))
+            ->with('timesheet')
+            ->get()
+            ->keyBy(static fn (TimesheetSegment $segment): int => (int) $segment->getKey());
+
         $detected = [];
 
-        $segments = $timesheet->segments()
-            ->with('timesheet')
-            ->get();
+        foreach ($pairs as [$firstId, $secondId]) {
+            [$firstId, $secondId] = self::orderedIds($firstId, $secondId);
+            $pairKey = self::pairKey($firstId, $secondId);
 
-        foreach ($segments as $segment) {
-            foreach ($this->detector->overlapsForSegment($segment) as $other) {
-                $segmentId = (int) $segment->getKey();
-                $otherId = (int) $other->getKey();
-
-                if ($segmentId === $otherId) {
-                    continue;
-                }
-
-                $byId = [$segmentId => $segment, $otherId => $other];
-                [$firstId, $secondId] = self::orderedIds($segmentId, $otherId);
-
-                $first = $byId[$firstId];
-                $second = $byId[$secondId];
-                $pairKey = self::pairKey($firstId, $secondId);
-
-                if (array_key_exists($pairKey, $detected)) {
-                    continue;
-                }
-
-                $detected[$pairKey] = [
-                    'pair_key' => $pairKey,
-                    'first_segment_id' => $firstId,
-                    'second_segment_id' => $secondId,
-                    'fingerprint' => $this->fingerprint($first, $second),
-                ];
+            if (array_key_exists($pairKey, $detected)) {
+                continue;
             }
+
+            $first = $segments->get($firstId);
+            $second = $segments->get($secondId);
+
+            if (! $first instanceof TimesheetSegment || ! $second instanceof TimesheetSegment) {
+                continue;
+            }
+
+            $detected[$pairKey] = [
+                'pair_key' => $pairKey,
+                'first_segment_id' => $firstId,
+                'second_segment_id' => $secondId,
+                'fingerprint' => $this->fingerprint($first, $second),
+            ];
         }
 
         ksort($detected);
 
         return array_values($detected);
+    }
+
+    /**
+     * Paires de segments en chevauchement pour le relevé, en une requête.
+     *
+     * Les prédicats reproduisent exactement `TimesheetOverlapDetector` :
+     * même salarié, segments distincts, chevauchement strict, toutes
+     * catégories et tous relevés confondus (y compris le même relevé).
+     *
+     * @return array<int, array{0: int, 1: int}>
+     */
+    private function overlappingPairIds(Timesheet $timesheet): array
+    {
+        return DB::table('timesheet_segments as own_segment')
+            ->join('timesheets as other_timesheet', function (JoinClause $join) use ($timesheet): void {
+                $join->where('other_timesheet.employee_id', (int) $timesheet->employee_id);
+            })
+            ->join('timesheet_segments as other_segment', function (JoinClause $join): void {
+                $join->on('other_segment.timesheet_id', '=', 'other_timesheet.id')
+                    ->whereColumn('other_segment.id', '!=', 'own_segment.id')
+                    ->whereColumn('other_segment.start_at', '<', 'own_segment.end_at')
+                    ->whereColumn('other_segment.end_at', '>', 'own_segment.start_at');
+            })
+            ->where('own_segment.timesheet_id', $timesheet->getKey())
+            ->get([
+                'own_segment.id as own_segment_id',
+                'other_segment.id as other_segment_id',
+            ])
+            ->map(static fn (object $row): array => [
+                (int) $row->own_segment_id,
+                (int) $row->other_segment_id,
+            ])
+            ->all();
     }
 
     /**

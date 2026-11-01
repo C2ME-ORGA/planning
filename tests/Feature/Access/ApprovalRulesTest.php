@@ -4,7 +4,7 @@ use App\Enums\AuditAction;
 use App\Enums\Role;
 use App\Models\AuditEvent;
 use App\Services\Access\ApprovalRules;
-use RuntimeException;
+use Illuminate\Validation\ValidationException;
 use Tests\Support\TimesheetFixtures;
 
 beforeEach(function (): void {
@@ -71,19 +71,35 @@ it('refuses self-approval to a chef, a conducteur and the administrator', functi
         ->count())->toBe(0);
 });
 
-it('refuses a self-approval reason outside the ten to five hundred character range', function (string $reason, string $expectedMessage): void {
-    expect(fn (): AuditEvent => $this->rules->recordSelfApproval(
-        $this->bureau,
-        (int) $this->bureau->getKey(),
-        $this->owner,
-        $reason,
-    ))->toThrow(RuntimeException::class, $expectedMessage);
+it('keeps a self-approval reason validation structured', function (string $reason, string $expectedMessage): void {
+    $thrown = null;
+
+    try {
+        $this->rules->recordSelfApproval(
+            $this->bureau,
+            (int) $this->bureau->getKey(),
+            $this->owner,
+            $reason,
+        );
+    } catch (ValidationException $exception) {
+        $thrown = $exception;
+    }
+
+    expect($thrown)->toBeInstanceOf(ValidationException::class);
+
+    if (! $thrown instanceof ValidationException) {
+        return;
+    }
+
+    expect($thrown->status)->toBe(422)
+        ->and($thrown->errors())->toHaveKey('reason')
+        ->and($thrown->errors()['reason'][0] ?? '')->toContain($expectedMessage);
 
     expect(AuditEvent::query()
         ->where('action', AuditAction::SelfApprovalRecorded->value)
         ->count())->toBe(0);
 })->with([
-    'too short' => ['123456789', '10 à 500'],
-    'blank' => ['   ', '10 à 500'],
-    'too long' => [str_repeat('a', 501), '10 à 500'],
+    'too short' => ['123456789', '10 caractères'],
+    'blank' => ['   ', 'motif est obligatoire'],
+    'too long' => [str_repeat('a', 501), '500 caractères'],
 ]);

@@ -18,6 +18,7 @@ use App\Services\Timesheets\TimesheetHistory;
 use App\Services\Timesheets\TimesheetOverlapOverview;
 use App\Services\Timesheets\TimesheetOverlapReviewService;
 use App\Services\Timesheets\TimesheetSubmissionService;
+use Illuminate\Support\Facades\Cache;
 use Livewire\Livewire;
 use Tests\Support\TimesheetFixtures;
 
@@ -349,6 +350,28 @@ it('shows the global read-only journal with server-side filters', function (): v
                     static fn (array $entry): bool => (int) $entry['subject_id'] === (int) $timesheet->getKey(),
                 );
         });
+});
+
+it('caches the journal actors for one hour and refreshes them after expiration', function (): void {
+    [$bureau, , $ownerUser, , , $owner] = workspaceBureauContext();
+    $timesheet = workspaceBureauUnderControl($owner, $ownerUser, '2026-11-02');
+    $newActor = TimesheetFixtures::user(Role::ChefEquipe);
+
+    Cache::flush();
+    $this->actingAs($bureau);
+
+    Livewire::test(Journal::class)
+        ->assertViewHas('actors', static fn ($actors): bool => $actors->contains('id', $ownerUser->getKey()));
+
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetSubmitted, $newActor);
+
+    Livewire::test(Journal::class)
+        ->assertViewHas('actors', static fn ($actors): bool => ! $actors->contains('id', $newActor->getKey()));
+
+    $this->travel(61)->minutes();
+
+    Livewire::test(Journal::class)
+        ->assertViewHas('actors', static fn ($actors): bool => $actors->contains('id', $newActor->getKey()));
 });
 
 it('displays the actor role recorded at the time of the event after a role change', function (): void {

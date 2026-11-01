@@ -10,6 +10,7 @@ use App\Services\Timesheets\TimesheetHistory;
 use App\Support\DatePeriod;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
@@ -28,6 +29,10 @@ use RuntimeException;
 class Journal extends Component
 {
     use WithPagination;
+
+    private const ACTOR_IDS_CACHE_KEY = 'planning.timesheets.journal.actor_ids.v1';
+
+    private const ACTOR_IDS_CACHE_TTL_MINUTES = 60;
 
     #[Url(as: 'du', except: '')]
     public string $dateFrom = '';
@@ -174,15 +179,19 @@ class Journal extends Component
      */
     private function actorIds(): array
     {
-        return AuditEvent::query()
-            ->whereNotNull('actor_id')
-            ->where('subject_type', Timesheet::class)
-            ->whereIn('action', TimesheetHistory::actions())
-            ->select('actor_id')
-            ->distinct()
-            ->pluck('actor_id')
-            ->map(static fn (mixed $id): int => (int) $id)
-            ->all();
+        return Cache::remember(
+            self::ACTOR_IDS_CACHE_KEY,
+            now()->addMinutes(self::ACTOR_IDS_CACHE_TTL_MINUTES),
+            static fn (): array => AuditEvent::query()
+                ->whereNotNull('actor_id')
+                ->where('subject_type', Timesheet::class)
+                ->whereIn('action', TimesheetHistory::actions())
+                ->select('actor_id')
+                ->distinct()
+                ->pluck('actor_id')
+                ->map(static fn (mixed $id): int => (int) $id)
+                ->all(),
+        );
     }
 
     private function normalizeDate(string $value, string $field): string

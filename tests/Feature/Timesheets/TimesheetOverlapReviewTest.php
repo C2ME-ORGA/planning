@@ -21,6 +21,7 @@ use App\Services\Timesheets\TimesheetSubmissionService;
 use App\Services\Timesheets\TimesheetValidationService;
 use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Tests\Support\TimesheetFixtures;
 
@@ -112,6 +113,62 @@ it('uses one canonical review per overlapping pair regardless of detection order
 
     expect($review->first_segment_id)->toBe(min($first->id, $second->id))
         ->and($review->second_segment_id)->toBe(max($first->id, $second->id));
+});
+
+it('detects an overlap between two distinct timesheets with the batched query', function (): void {
+    $first = TimesheetFixtures::timesheet($this->owner, week: '2026-10-26');
+    $second = TimesheetFixtures::timesheet($this->owner, week: '2026-11-02');
+
+    $firstSegment = TimesheetFixtures::segment(
+        $first,
+        start: '2026-11-01 22:00:00',
+        end: '2026-11-02 02:00:00',
+    );
+    $secondSegment = TimesheetFixtures::segment(
+        $second,
+        start: '2026-11-02 01:00:00',
+        end: '2026-11-02 03:00:00',
+    );
+
+    $overlaps = $this->reviews->overlapsFor($first);
+    $mirror = $this->reviews->overlapsFor($second);
+
+    expect($overlaps)->toHaveCount(1)
+        ->and($overlaps[0]['pair_key'])->toBe(TimesheetOverlapReviewService::pairKey(
+            (int) $firstSegment->getKey(),
+            (int) $secondSegment->getKey(),
+        ))
+        ->and($overlaps[0]['fingerprint'])->not->toBeEmpty()
+        ->and($mirror)->toHaveCount(1)
+        ->and($mirror[0]['pair_key'])->toBe($overlaps[0]['pair_key'])
+        ->and($mirror[0]['fingerprint'])->toBe($overlaps[0]['fingerprint']);
+});
+
+it('loads all overlap pairs in a constant number of queries', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner, week: '2026-11-02');
+
+    TimesheetFixtures::segment($timesheet, start: '2026-11-02 08:00:00', end: '2026-11-02 12:00:00');
+    TimesheetFixtures::segment($timesheet, start: '2026-11-02 09:00:00', end: '2026-11-02 13:00:00');
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $small = $this->reviews->overlapsFor($timesheet);
+    $smallQueryCount = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    TimesheetFixtures::segment($timesheet, start: '2026-11-02 10:00:00', end: '2026-11-02 14:00:00');
+    TimesheetFixtures::segment($timesheet, start: '2026-11-02 11:00:00', end: '2026-11-02 15:00:00');
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $large = $this->reviews->overlapsFor($timesheet);
+    $largeQueryCount = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    expect($small)->toHaveCount(1)
+        ->and($large)->toHaveCount(6)
+        ->and($smallQueryCount)->toBe($largeQueryCount)
+        ->and($largeQueryCount)->toBe(3);
 });
 
 it('keeps two distinct overlaps independent during validation', function (): void {

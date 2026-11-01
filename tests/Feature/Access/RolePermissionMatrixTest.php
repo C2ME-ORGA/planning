@@ -9,6 +9,7 @@ use App\Services\Access\ApprovalRules;
 use App\Services\Access\PermissionExceptionService;
 use App\Services\Audit\AuditLogger;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 
 it('applies the approved role matrix on the server', function () {
     $expected = [
@@ -180,7 +181,7 @@ it('requires a Bureau reason before approving its own production', function () {
         ->and($rules->canApprove($chef, $owner->id))->toBeFalse()
         ->and($rules->canApprove($chef, $chef->id))->toBeFalse();
 
-    expect(fn () => $rules->recordSelfApproval($bureau, $bureau->id, $owner, 'Court'))->toThrow(RuntimeException::class);
+    expect(fn () => $rules->recordSelfApproval($bureau, $bureau->id, $owner, 'Court'))->toThrow(ValidationException::class);
     expect(fn () => $rules->recordSelfApproval($chef, $chef->id, $owner, 'Auto-validation du chef.'))->toThrow(RuntimeException::class);
 
     $event = $rules->recordSelfApproval(
