@@ -106,6 +106,10 @@ class BatchValidation extends Component
         if (trim($this->search) !== '') {
             $search = trim($this->search);
 
+            // La recherche par sous-chaîne (`%terme%`) ne peut pas exploiter
+            // l'index (last_name, first_name) de `employees`. Le comportement
+            // est conservé pour le MVP ; une recherche plein texte ou un index
+            // dédié devra être étudié si le volume de salariés l'exige.
             $query->whereHas('employee', function (Builder $employee) use ($search): void {
                 $employee->where('first_name', 'like', '%'.$search.'%')
                     ->orWhere('last_name', 'like', '%'.$search.'%');

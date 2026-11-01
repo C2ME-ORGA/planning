@@ -3,6 +3,7 @@
 use App\Enums\AuditAction;
 use App\Enums\Role;
 use App\Enums\TimesheetStatus;
+use App\Livewire\Timesheets\EmployeeDashboard;
 use App\Livewire\Timesheets\TimesheetDetail;
 use App\Livewire\Timesheets\TimesheetList;
 use App\Livewire\Timesheets\WeeklyTimesheet;
@@ -39,6 +40,32 @@ it('redirects a terrain user to the employee workspace and renders the dashboard
         ->assertSee('Mon espace')
         ->assertSee('Semaine en cours')
         ->assertSee($owner->last_name);
+});
+
+it('builds the dashboard counters from SQL aggregations scoped to the linked employee', function (): void {
+    [$ownerUser, $owner] = workspaceEmployeeContext();
+    $otherUser = TimesheetFixtures::user(Role::Ouvrier);
+    $other = TimesheetFixtures::employee($otherUser);
+
+    TimesheetFixtures::timesheet($owner, week: '2026-10-05', status: TimesheetStatus::AControler);
+    TimesheetFixtures::timesheet($owner, week: '2026-10-12', status: TimesheetStatus::PretePourValidation);
+    TimesheetFixtures::timesheet($owner, week: '2026-10-19', status: TimesheetStatus::ACorriger);
+    TimesheetFixtures::timesheet($owner, week: '2026-10-26', status: TimesheetStatus::Brouillon);
+    TimesheetFixtures::timesheet($owner, week: '2026-11-02', status: TimesheetStatus::Validee);
+
+    TimesheetFixtures::timesheet($other, week: '2026-10-05', status: TimesheetStatus::Validee);
+    TimesheetFixtures::timesheet($other, week: '2026-10-12', status: TimesheetStatus::AControler);
+
+    $this->actingAs($ownerUser);
+
+    Livewire::test(EmployeeDashboard::class)
+        ->assertViewHas('counts', static fn (array $counts): bool => $counts === [
+            'pending' => 2,
+            'corrections' => 1,
+            'drafts' => 1,
+            'validated' => 1,
+        ])
+        ->assertViewHas('timesheets', static fn ($timesheets): bool => $timesheets->count() === 5);
 });
 
 it('renders the weekly planning and opens a draft through the business service', function (): void {

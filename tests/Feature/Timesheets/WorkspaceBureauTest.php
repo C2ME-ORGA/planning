@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Services\Timesheets\TimesheetActorHistory;
 use App\Services\Timesheets\TimesheetControlService;
 use App\Services\Timesheets\TimesheetHistory;
+use App\Services\Timesheets\TimesheetOverlapOverview;
 use App\Services\Timesheets\TimesheetOverlapReviewService;
 use App\Services\Timesheets\TimesheetSubmissionService;
 use Livewire\Livewire;
@@ -339,6 +340,15 @@ it('shows the global read-only journal with server-side filters', function (): v
     Livewire::test(Journal::class)
         ->set('employeeId', (string) ($timesheet->employee_id + 999))
         ->assertViewHas('entries', static fn (array $entries): bool => $entries === []);
+
+    Livewire::test(Journal::class)
+        ->set('employeeId', (string) $timesheet->employee_id)
+        ->assertViewHas('entries', function (array $entries) use ($timesheet): bool {
+            return $entries !== []
+                && collect($entries)->every(
+                    static fn (array $entry): bool => (int) $entry['subject_id'] === (int) $timesheet->getKey(),
+                );
+        });
 });
 
 it('displays the actor role recorded at the time of the event after a role change', function (): void {
@@ -413,6 +423,63 @@ it('applies the status filter inside the overlap queue', function (): void {
             return $ids === [(int) $underControl->getKey()]
                 && ! in_array((int) $ready->getKey(), $ids, true);
         });
+});
+
+it('returns only timesheets with a pending or stale overlap review', function (): void {
+    [$bureau, , $ownerUser, , , $owner] = workspaceBureauContext();
+
+    [$pending] = workspaceBureauOverlap(
+        workspaceBureauUnderControl($owner, $ownerUser, '2026-10-05'),
+        '2026-10-05',
+    );
+
+    [$reviewed, $reviewedPair] = workspaceBureauOverlap(
+        workspaceBureauUnderControl($owner, $ownerUser, '2026-10-12'),
+        '2026-10-12',
+    );
+    [$reviewedFirst, $reviewedSecond] = array_map(
+        static fn (string $id): int => (int) $id,
+        explode(':', $reviewedPair),
+    );
+    app(TimesheetOverlapReviewService::class)->review(
+        $reviewed,
+        $reviewedFirst,
+        $reviewedSecond,
+        OverlapReviewDecision::Accepted,
+        'Chevauchement déjà examiné et accepté.',
+        $bureau,
+    );
+
+    [$stale, $stalePair] = workspaceBureauOverlap(
+        workspaceBureauUnderControl($owner, $ownerUser, '2026-10-19'),
+        '2026-10-19',
+    );
+    [$staleFirst, $staleSecond] = array_map(
+        static fn (string $id): int => (int) $id,
+        explode(':', $stalePair),
+    );
+    app(TimesheetOverlapReviewService::class)->review(
+        $stale,
+        $staleFirst,
+        $staleSecond,
+        OverlapReviewDecision::Accepted,
+        'Chevauchement accepté avant reprise de correction.',
+        $bureau,
+    );
+    TimesheetFixtures::audit($stale, AuditAction::TimesheetCorrectionResumed, $ownerUser);
+
+    $withoutOverlap = workspaceBureauUnderControl($owner, $ownerUser, '2026-10-26');
+
+    $ids = app(TimesheetOverlapOverview::class)
+        ->timesheetsWithPendingOverlaps()
+        ->pluck('id')
+        ->map(static fn (mixed $id): int => (int) $id)
+        ->all();
+
+    expect($ids)->toContain((int) $pending->getKey())
+        ->and($ids)->toContain((int) $stale->getKey())
+        ->and($ids)->not->toContain((int) $reviewed->getKey())
+        ->and($ids)->not->toContain((int) $withoutOverlap->getKey());
 });
 
 it('keeps the Bureau perimeter bypass impossible for every queue through Livewire state', function (string $queue): void {

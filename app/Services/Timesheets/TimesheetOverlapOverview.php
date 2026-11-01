@@ -125,7 +125,13 @@ final class TimesheetOverlapOverview
 
     /**
      * Relevés dont le statut autorise une revue et qui possèdent au moins une
-     * paire non examinée ou dont la revue est obsolète.
+     * paire de segments en chevauchement.
+     *
+     * La requête SQL préfiltre les seuls relevés comportant une paire
+     * réellement en chevauchement selon la même règle temporelle que
+     * `TimesheetOverlapDetector`. Le contrôle final de l'état de la revue
+     * (cycle et empreinte SHA-256) reste en PHP : l'empreinte est calculée à
+     * partir des données PHP et ne doit pas être dupliquée en SQL.
      *
      * @return Collection<int, Timesheet>
      */
@@ -141,7 +147,25 @@ final class TimesheetOverlapOverview
                 static fn (TimesheetStatus $status): string => $status->value,
                 $statuses,
             ))
-            ->with(['employee', 'segments'])
+            ->whereExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('timesheet_segments as own_segment')
+                    ->whereColumn('own_segment.timesheet_id', 'timesheets.id')
+                    ->whereExists(function ($other): void {
+                        $other->selectRaw('1')
+                            ->from('timesheet_segments as other_segment')
+                            ->join(
+                                'timesheets as other_timesheet',
+                                'other_timesheet.id',
+                                '=',
+                                'other_segment.timesheet_id',
+                            )
+                            ->whereColumn('other_timesheet.employee_id', 'timesheets.employee_id')
+                            ->whereColumn('other_segment.id', '!=', 'own_segment.id')
+                            ->whereColumn('own_segment.start_at', '<', 'other_segment.end_at')
+                            ->whereColumn('own_segment.end_at', '>', 'other_segment.start_at');
+                    });
+            })
             ->orderByDesc('period_start')
             ->get()
             ->filter(fn (Timesheet $timesheet): bool => $this->pendingPairCount($timesheet) > 0)

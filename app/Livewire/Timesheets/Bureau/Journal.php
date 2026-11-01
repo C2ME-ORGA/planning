@@ -117,14 +117,11 @@ class Journal extends Component
         }
 
         if ($this->employeeId !== '') {
-            $ids = Timesheet::query()
-                ->where('employee_id', (int) $this->employeeId)
-                ->select('id')
-                ->pluck('id')
-                ->map(static fn (mixed $id): string => (string) $id)
-                ->all();
-
-            $query->whereIn('subject_id', $ids);
+            $query->whereIn('subject_id', function ($subquery): void {
+                $subquery->selectRaw('CAST(id AS CHAR(20))')
+                    ->from('timesheets')
+                    ->where('employee_id', (int) $this->employeeId);
+            });
         }
 
         if ($this->timesheetId !== '') {

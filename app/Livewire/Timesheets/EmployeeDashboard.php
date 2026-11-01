@@ -11,6 +11,7 @@ use App\Services\Timesheets\TimesheetQuery;
 use App\Services\Timesheets\TimesheetSummary;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\View\View;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
@@ -42,25 +43,38 @@ class EmployeeDashboard extends Component
         $timesheets = $employee instanceof Employee
             ? Timesheet::query()
                 ->where('employee_id', $employee->getKey())
-                ->with('segments')
-                ->orderByDesc('period_start')
-                ->get()
-            : collect();
+            : null;
 
         $currentPeriod = Timesheet::weekFor(CarbonImmutable::now());
-        $current = $timesheets->first(
-            static fn (Timesheet $timesheet): bool => $timesheet->period_start?->isSameDay($currentPeriod['start']) ?? false,
-        );
+
+        $current = $timesheets instanceof Builder
+            ? (clone $timesheets)
+                ->where('period_start', $currentPeriod['start']->toDateString())
+                ->with('segments')
+                ->first()
+            : null;
 
         $counts = [
-            'pending' => $timesheets->whereIn('status', [
-                TimesheetStatus::AControler,
-                TimesheetStatus::PretePourValidation,
-            ])->count(),
-            'corrections' => $timesheets->where('status', TimesheetStatus::ACorriger)->count(),
-            'drafts' => $timesheets->where('status', TimesheetStatus::Brouillon)->count(),
-            'validated' => $timesheets->where('status', TimesheetStatus::Validee)->count(),
+            'pending' => 0,
+            'corrections' => 0,
+            'drafts' => 0,
+            'validated' => 0,
         ];
+
+        if ($timesheets instanceof Builder) {
+            $rows = (clone $timesheets)
+                ->selectRaw('status, COUNT(*) as aggregate')
+                ->groupBy('status')
+                ->pluck('aggregate', 'status');
+
+            $counts = [
+                'pending' => (int) ($rows[TimesheetStatus::AControler->value] ?? 0)
+                    + (int) ($rows[TimesheetStatus::PretePourValidation->value] ?? 0),
+                'corrections' => (int) ($rows[TimesheetStatus::ACorriger->value] ?? 0),
+                'drafts' => (int) ($rows[TimesheetStatus::Brouillon->value] ?? 0),
+                'validated' => (int) ($rows[TimesheetStatus::Validee->value] ?? 0),
+            ];
+        }
 
         $summary = app(TimesheetSummary::class);
         $history = app(TimesheetHistory::class);
@@ -68,22 +82,31 @@ class EmployeeDashboard extends Component
         $recentEvents = $employee instanceof Employee
             ? $history->presentMany(
                 $history->globalQuery()
-                    ->whereIn('subject_id', $timesheets
-                        ->pluck('id')
-                        ->map(static fn (mixed $id): string => (string) $id)
-                        ->all())
+                    ->whereIn('subject_id', function ($query) use ($employee): void {
+                        $query->selectRaw('CAST(id AS CHAR(20))')
+                            ->from('timesheets')
+                            ->where('employee_id', $employee->getKey());
+                    })
                     ->orderByDesc('sequence')
                     ->limit(8)
                     ->get(),
             )
             : [];
 
+        $recentTimesheets = $timesheets instanceof Builder
+            ? (clone $timesheets)
+                ->with('segments')
+                ->orderByDesc('period_start')
+                ->limit(5)
+                ->get()
+            : collect();
+
         return view('livewire.timesheets.employee.dashboard', [
             'employee' => $employee,
             'current' => $current,
             'currentTotal' => $current instanceof Timesheet ? $summary->totalMinutes($current) : 0,
             'counts' => $counts,
-            'timesheets' => $timesheets->take(5),
+            'timesheets' => $recentTimesheets,
             'recentEvents' => $recentEvents,
             'totalFormatter' => $summary,
         ]);
