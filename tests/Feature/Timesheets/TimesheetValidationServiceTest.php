@@ -105,7 +105,7 @@ it('refuses validation by a role without the validation permission', function ()
     expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation);
 });
 
-it('refuses validation by the owner of the timesheet', function (): void {
+it('allows Bureau self-validation only with a reason and records a dedicated audit event', function (): void {
     $bureauEmployee = TimesheetFixtures::employee($this->bureau);
     $timesheet = pc132CompleteTrail($bureauEmployee, $this->ownerUser, $this->chefUser);
 
@@ -113,6 +113,15 @@ it('refuses validation by the owner of the timesheet', function (): void {
         ->toThrow(AuthorizationException::class);
 
     expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation);
+
+    $this->service->validate($timesheet, $this->bureau, 'Auto-validation motivée : contrôle documentaire effectué');
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Validee)
+        ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)
+            ->where('subject_id', (string) $timesheet->getKey())->count())->toBe(1)
+        ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)
+            ->where('subject_id', (string) $timesheet->getKey())->firstOrFail()->reason)
+        ->toBe('Auto-validation motivée : contrôle documentaire effectué');
 });
 
 it('refuses validation by an actor who prepared the timesheet', function (): void {
@@ -402,4 +411,249 @@ it('runs the full submission, control and validation flow', function (): void {
         ->where('action', AuditAction::TimesheetValidated->value)
         ->where('actor_id', $this->bureau->getKey())
         ->exists())->toBeTrue();
+});
+
+it('refuses validation by a conducteur or the administrator at service level', function (): void {
+    $timesheet = pc132CompleteTrail($this->owner, $this->ownerUser, $this->chefUser);
+    $conducteur = TimesheetFixtures::user(Role::Conducteur);
+    $admin = TimesheetFixtures::user(Role::Admin);
+
+    expect(fn (): Timesheet => $this->service->validate($timesheet, $conducteur))
+        ->toThrow(AuthorizationException::class);
+
+    expect(fn (): Timesheet => $this->service->validate($timesheet, $admin))
+        ->toThrow(AuthorizationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetValidated->value)->count())->toBe(0);
+});
+
+it('refuses validation by a Bureau who returned the timesheet for correction', function (): void {
+    $timesheet = pc132CompleteTrail($this->owner, $this->ownerUser, $this->chefUser);
+    TimesheetFixtures::audit(
+        $timesheet,
+        AuditAction::TimesheetReturnedForCorrection,
+        $this->secondBureau,
+        'Correction demandée',
+    );
+
+    expect(fn (): Timesheet => $this->service->validate($timesheet, $this->secondBureau))
+        ->toThrow(AuthorizationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation);
+});
+
+it('refuses a self-validation reason shorter than ten characters', function (): void {
+    $bureauEmployee = TimesheetFixtures::employee($this->bureau);
+    $timesheet = pc132CompleteTrail($bureauEmployee, $this->ownerUser, $this->chefUser);
+
+    expect(fn (): Timesheet => $this->service->validate($timesheet, $this->bureau, '123456789'))
+        ->toThrow(AuthorizationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
+        ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)->count())->toBe(0)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetValidated->value)->count())->toBe(0);
+});
+
+it('accepts a five-hundred-character self-validation reason', function (): void {
+    $bureauEmployee = TimesheetFixtures::employee($this->bureau);
+    $timesheet = pc132CompleteTrail($bureauEmployee, $this->ownerUser, $this->chefUser);
+    $reason = str_repeat('a', 500);
+
+    $this->service->validate($timesheet, $this->bureau, $reason);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Validee)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::SelfApprovalRecorded->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->firstOrFail()->reason)->toBe($reason)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetValidated->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->firstOrFail()->reason)->toBe($reason);
+});
+
+it('accepts a ten-character self-validation reason and records it once on both events', function (): void {
+    $bureauEmployee = TimesheetFixtures::employee($this->bureau);
+    $timesheet = pc132CompleteTrail($bureauEmployee, $this->ownerUser, $this->chefUser);
+
+    $this->service->validate($timesheet, $this->bureau, '  1234567890  ');
+
+    $selfApproval = AuditEvent::query()
+        ->where('action', AuditAction::SelfApprovalRecorded->value)
+        ->where('subject_id', (string) $timesheet->getKey())
+        ->get();
+
+    $validated = AuditEvent::query()
+        ->where('action', AuditAction::TimesheetValidated->value)
+        ->where('subject_id', (string) $timesheet->getKey())
+        ->get();
+
+    expect($selfApproval)->toHaveCount(1)
+        ->and($selfApproval->first()->reason)->toBe('1234567890')
+        ->and($validated)->toHaveCount(1)
+        ->and($validated->first()->reason)->toBe('1234567890');
+});
+
+it('refuses an oversized self-validation reason', function (): void {
+    $bureauEmployee = TimesheetFixtures::employee($this->bureau);
+    $timesheet = pc132CompleteTrail($bureauEmployee, $this->ownerUser, $this->chefUser);
+
+    expect(fn (): Timesheet => $this->service->validate($timesheet, $this->bureau, str_repeat('a', 501)))
+        ->toThrow(AuthorizationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
+        ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)->count())->toBe(0)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetValidated->value)->count())->toBe(0);
+});
+
+it('refuses validation and reopening by an inactive Bureau account', function (): void {
+    $timesheet = pc132CompleteTrail($this->owner, $this->ownerUser, $this->chefUser);
+    $this->bureau->forceFill(['is_active' => false])->save();
+
+    expect(fn (): Timesheet => $this->service->validate($timesheet, $this->bureau))
+        ->toThrow(AuthorizationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetValidated->value)->count())->toBe(0);
+
+    $validated = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09', status: TimesheetStatus::Validee);
+
+    expect(fn (): Timesheet => $this->service->reopen($validated, 'Réouverture demandée', $this->bureau))
+        ->toThrow(AuthorizationException::class);
+
+    expect($validated->fresh()?->status)->toBe(TimesheetStatus::Validee)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetReopened->value)->count())->toBe(0);
+});
+
+it('allows a Bureau who resumed a correction to validate after a new complete cycle', function (): void {
+    $timesheet = app(TimesheetService::class)->openFor($this->owner, '2026-11-02', $this->ownerUser);
+
+    app(TimesheetSegmentService::class)->add(
+        $timesheet,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 08:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 12:00', 'Europe/Paris'),
+        ],
+        $this->ownerUser,
+    );
+
+    app(TimesheetSubmissionService::class)->submit($timesheet, $this->ownerUser);
+
+    $this->controls->requestCorrection($timesheet->fresh() ?? $timesheet, 'Correction demandée', $this->chefUser);
+    $this->controls->resumeCorrection($timesheet->fresh() ?? $timesheet, $this->secondBureau);
+
+    app(TimesheetSegmentService::class)->add(
+        $timesheet->fresh() ?? $timesheet,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-03 08:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-03 12:00', 'Europe/Paris'),
+        ],
+        $this->ownerUser,
+    );
+
+    app(TimesheetSubmissionService::class)->submit($timesheet->fresh() ?? $timesheet, $this->ownerUser);
+    $this->controls->markReadyForValidation($timesheet->fresh() ?? $timesheet, 'Contrôle satisfaisant', $this->chefUser);
+
+    $validated = $this->service->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau);
+
+    expect($validated->status)->toBe(TimesheetStatus::Validee)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetCorrectionResumed->value)
+            ->where('actor_id', $this->secondBureau->getKey())
+            ->exists())->toBeTrue();
+});
+
+it('lets a Bureau owner complete the workflow and self-validate with a reason', function (): void {
+    $bureauEmployee = TimesheetFixtures::employee($this->bureau);
+    TimesheetFixtures::assign($bureauEmployee, $this->team);
+
+    $timesheet = app(TimesheetService::class)->openFor($bureauEmployee, '2026-11-02', $this->bureau);
+
+    app(TimesheetSegmentService::class)->add(
+        $timesheet,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 08:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 12:00', 'Europe/Paris'),
+        ],
+        $this->bureau,
+    );
+
+    app(TimesheetSubmissionService::class)->submit($timesheet, $this->bureau);
+    $this->controls->markReadyForValidation($timesheet->fresh() ?? $timesheet, 'Contrôle satisfaisant', $this->chefUser);
+
+    $validated = $this->service->validate(
+        $timesheet->fresh() ?? $timesheet,
+        $this->bureau,
+        'Auto-validation motivée : contrôle documentaire effectué',
+    );
+
+    expect($validated->status)->toBe(TimesheetStatus::Validee)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetCreated->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->where('actor_id', $this->bureau->getKey())
+            ->exists())->toBeTrue()
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetSubmitted->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->where('actor_id', $this->bureau->getKey())
+            ->exists())->toBeTrue()
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::SelfApprovalRecorded->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->count())->toBe(1)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetValidated->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->count())->toBe(1);
+});
+
+it('never lets a chef, conducteur or administrator self-validate', function (): void {
+    foreach ([Role::ChefEquipe, Role::Conducteur, Role::Admin] as $role) {
+        $user = TimesheetFixtures::user($role);
+        $employee = TimesheetFixtures::employee($user);
+        $timesheet = pc132CompleteTrail($employee, $this->ownerUser, $this->chefUser);
+
+        expect(fn (): Timesheet => $this->service->validate($timesheet, $user, 'Auto-validation motivée'))
+            ->toThrow(AuthorizationException::class);
+
+        expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation);
+    }
+});
+
+it('rolls back both self-validation events when the audit fails', function (): void {
+    $bureauEmployee = TimesheetFixtures::employee($this->bureau);
+    $timesheet = pc132CompleteTrail($bureauEmployee, $this->ownerUser, $this->chefUser);
+
+    config(['planning.audit.key' => 'trop-court']);
+
+    expect(fn (): Timesheet => $this->service->validate(
+        $timesheet,
+        $this->bureau,
+        'Auto-validation motivée : contrôle documentaire effectué',
+    ))->toThrow(RuntimeException::class, 'PLANNING_AUDIT_KEY');
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
+        ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)->count())->toBe(0)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetValidated->value)->count())->toBe(0);
+});
+
+it('refuses self-validation by an inactive Bureau owner', function (): void {
+    $bureauEmployee = TimesheetFixtures::employee($this->bureau);
+    $timesheet = pc132CompleteTrail($bureauEmployee, $this->ownerUser, $this->chefUser);
+
+    $this->bureau->forceFill(['is_active' => false])->save();
+
+    expect(fn (): Timesheet => $this->service->validate(
+        $timesheet,
+        $this->bureau,
+        'Auto-validation motivée : contrôle documentaire effectué',
+    ))->toThrow(AuthorizationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
+        ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)->count())->toBe(0);
 });

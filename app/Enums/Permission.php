@@ -43,6 +43,7 @@ enum Permission: string
     case TimesheetOwn = 'timesheet.own';
     case TimesheetControl = 'timesheet.control';
     case TimesheetValidate = 'timesheet.validate';
+    case TimesheetOverlapReview = 'timesheet.overlap-review';
     case WorkflowCorrect = 'workflow.correct';
     case WorkflowReopen = 'workflow.reopen';
     case AvailabilityViewPerimeter = 'availability.view-perimeter';
@@ -76,6 +77,7 @@ enum Permission: string
             self::TimesheetOwn => 'Gérer ses propres relevés',
             self::TimesheetControl => 'Contrôler les relevés de son périmètre',
             self::TimesheetValidate => 'Valider définitivement un relevé',
+            self::TimesheetOverlapReview => 'Examiner les chevauchements de relevés',
             self::WorkflowCorrect => 'Corriger un relevé',
             self::WorkflowReopen => 'Réouvrir un relevé validé',
             self::AvailabilityViewPerimeter => 'Voir la disponibilité de son périmètre',

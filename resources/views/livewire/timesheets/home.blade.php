@@ -1,0 +1,3 @@
+<div class="rounded-xl border border-stone-200 bg-white p-6 text-sm text-stone-600 shadow-sm">
+    Redirection vers votre espace…
+</div>

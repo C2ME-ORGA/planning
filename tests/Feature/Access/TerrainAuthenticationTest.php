@@ -13,7 +13,7 @@ it('allows active and activated terrain roles to sign in to the planning', funct
     $this->post('/login', [
         'email' => $user->email,
         'password' => 'Terrain-Passw0rd!',
-    ])->assertRedirect(route('planning.mobile'));
+    ])->assertRedirect(route('workspace.home'));
 
     $this->assertAuthenticatedAs($user, 'web');
 })->with([

@@ -1,6 +1,7 @@
 <?php
 
 use App\Enums\AuditAction;
+use App\Enums\Permission;
 use App\Enums\Role;
 use App\Enums\TimeCategory;
 use App\Enums\TimesheetStatus;
@@ -132,13 +133,16 @@ it('submits a valid segment crossing midnight inside the week', function (): voi
 it('never lets the Bureau or a chef submit on behalf of the employee', function (): void {
     TimesheetFixtures::segment($this->timesheet);
 
+    expect($this->bureau->hasPermission(Permission::TimesheetOwn))->toBeTrue();
+
     expect(fn (): Timesheet => $this->service->submit($this->timesheet, $this->bureau))
         ->toThrow(AuthorizationException::class);
 
     expect(fn (): Timesheet => $this->service->submit($this->timesheet, $this->chefUser))
         ->toThrow(AuthorizationException::class);
 
-    expect($this->timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon);
+    expect($this->timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSubmitted->value)->count())->toBe(0);
 });
 
 it('refuses submission when the employee has no linked account', function (): void {
@@ -162,6 +166,9 @@ it('refuses submission by an inactive account', function (): void {
 
     expect(fn (): Timesheet => $this->service->submit($this->timesheet, $this->ownerUser))
         ->toThrow(AuthorizationException::class);
+
+    expect($this->timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSubmitted->value)->count())->toBe(0);
 });
 
 it('is idempotent on an already submitted timesheet', function (): void {

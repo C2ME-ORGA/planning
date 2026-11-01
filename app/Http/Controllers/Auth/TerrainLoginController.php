@@ -21,7 +21,7 @@ class TerrainLoginController extends Controller
 
         if ($user instanceof User) {
             return redirect()->route(
-                $user->role->canAccessAdministrationPanel() ? 'filament.admin.pages.dashboard' : 'planning.mobile',
+                $user->role->canAccessAdministrationPanel() ? 'filament.admin.pages.dashboard' : 'workspace.home',
             );
         }
 
@@ -55,7 +55,7 @@ class TerrainLoginController extends Controller
         Auth::guard('web')->login($user);
         $request->session()->regenerate();
 
-        return redirect()->intended(route('planning.mobile'));
+        return redirect()->intended(route('workspace.home'));
     }
 
     public function destroy(Request $request): RedirectResponse

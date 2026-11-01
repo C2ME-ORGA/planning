@@ -8,6 +8,7 @@ use App\Models\Timesheet;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use App\Support\TimesheetReason;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
@@ -28,25 +29,50 @@ class TimesheetValidationService
 {
     public function __construct(
         private readonly AuditLogger $audit,
+        private readonly TimesheetOverlapReviewService $overlaps,
     ) {}
 
-    public function validate(Timesheet $timesheet, User $actor): Timesheet
+    public function validate(Timesheet $timesheet, User $actor, ?string $reason = null): Timesheet
     {
-        return DB::transaction(function () use ($timesheet, $actor): Timesheet {
+        return DB::transaction(function () use ($timesheet, $actor, $reason): Timesheet {
             $locked = $this->lockTimesheet($timesheet);
 
-            // L'historique est lu par la policy après acquisition du verrou.
-            Gate::forUser($actor)->authorize('validate', $locked);
+            if (! $actor->isActive()) {
+                throw new AuthorizationException('Ce compte est inactif et ne peut pas valider un relevé.');
+            }
+
+            // Le motif n'est obligatoire que pour une auto-validation Bureau/Direction.
+            // La policy détermine si l'acteur est propriétaire et impose alors le motif.
+            Gate::forUser($actor)->authorize('validate', [$locked, $reason]);
+
+            // Tous les chevauchements courants doivent être couverts par une
+            // revue acceptée, à jour et rattachée au cycle courant. Le refus
+            // intervient avant toute écriture de statut ou d'audit.
+            $this->overlaps->assertReadyForValidation($locked);
 
             $from = $locked->status;
+            $selfValidation = $locked->employee?->user_id === $actor->getKey();
+            $normalizedReason = $selfValidation
+                ? TimesheetReason::required($reason ?? '')
+                : null;
 
             $locked->forceFill(['status' => TimesheetStatus::Validee->value])->save();
+
+            if ($selfValidation) {
+                $this->audit->record(
+                    AuditAction::SelfApprovalRecorded,
+                    $locked,
+                    ['from' => $from->value, 'to' => TimesheetStatus::Validee->value],
+                    $normalizedReason,
+                    $actor,
+                );
+            }
 
             $this->audit->record(
                 AuditAction::TimesheetValidated,
                 $locked,
                 ['from' => $from->value, 'to' => TimesheetStatus::Validee->value],
-                null,
+                $normalizedReason,
                 $actor,
             );
 
@@ -58,6 +84,10 @@ class TimesheetValidationService
     {
         return DB::transaction(function () use ($timesheet, $reason, $actor): Timesheet {
             $locked = $this->lockTimesheet($timesheet);
+
+            if (! $actor->isActive()) {
+                throw new AuthorizationException('Ce compte est inactif et ne peut pas réouvrir un relevé.');
+            }
 
             $reason = $this->authorizeReopen($actor, $locked, $reason);
 
@@ -77,7 +107,7 @@ class TimesheetValidationService
         });
     }
 
-    private const REASON_PROBE = 'motif';
+    private const REASON_PROBE = 'motif de contrôle';
 
     /**
      * Autorise la réouverture avant de valider le contenu du motif : un acteur

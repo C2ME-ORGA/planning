@@ -66,6 +66,8 @@ enum AuditAction: string
     case TimesheetReadyForValidation = 'timesheet.ready_for_validation';
     case TimesheetValidated = 'timesheet.validated';
     case TimesheetReopened = 'timesheet.reopened';
+    case TimesheetOverlapReviewAccepted = 'timesheet.overlap_review_accepted';
+    case TimesheetOverlapReviewRejected = 'timesheet.overlap_review_rejected';
 
     case SelfApprovalRecorded = 'approval.self_approval_recorded';
 
@@ -129,6 +131,8 @@ enum AuditAction: string
             self::TimesheetReadyForValidation => 'Relevé prêt pour validation',
             self::TimesheetValidated => 'Relevé validé',
             self::TimesheetReopened => 'Relevé réouvert',
+            self::TimesheetOverlapReviewAccepted => 'Chevauchement accepté',
+            self::TimesheetOverlapReviewRejected => 'Chevauchement rejeté',
             self::SelfApprovalRecorded => 'Auto-validation motivée',
             self::EmergencyLockdown => 'Verrouillage d’urgence',
         };

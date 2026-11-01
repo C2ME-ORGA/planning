@@ -8,6 +8,7 @@ use App\Models\Timesheet;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use App\Support\TimesheetReason;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
@@ -64,7 +65,7 @@ class TimesheetControlService
         );
     }
 
-    private const REASON_PROBE = 'motif';
+    private const REASON_PROBE = 'motif de contrôle';
 
     private function transition(
         Timesheet $timesheet,
@@ -79,6 +80,10 @@ class TimesheetControlService
                 ->whereKey($timesheet->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
+
+            if (! $actor->isActive()) {
+                throw new AuthorizationException('Ce compte est inactif et ne peut pas contrôler un relevé.');
+            }
 
             $reason = $this->authorizeReasonedAction($actor, $locked, $ability, $reason);
 

@@ -203,6 +203,86 @@ it('requires the reopen reason through the Gate argument list', function (): voi
         ->and(Gate::forUser($this->bureau)->allows('reopen', $timesheet))->toBeFalse();
 });
 
+it('never allows a conducteur or the administrator to validate', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::PretePourValidation);
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetReadyForValidation, $this->chefUser, 'Contrôle satisfaisant');
+
+    expect($this->policy->validate($this->conducteurUser, $timesheet))->toBeFalse()
+        ->and($this->policy->validate(TimesheetFixtures::user(Role::Admin), $timesheet))->toBeFalse();
+});
+
+it('allows only an active Bureau owner to self-validate with a valid reason', function (): void {
+    $bureauEmployee = TimesheetFixtures::employee($this->bureau);
+    $bureauSheet = TimesheetFixtures::timesheet($bureauEmployee, status: TimesheetStatus::PretePourValidation);
+    TimesheetFixtures::audit($bureauSheet, AuditAction::TimesheetCreated, $this->bureau);
+    TimesheetFixtures::audit($bureauSheet, AuditAction::TimesheetSubmitted, $this->bureau);
+    TimesheetFixtures::audit($bureauSheet, AuditAction::TimesheetReadyForValidation, $this->chefUser, 'Contrôle satisfaisant');
+
+    expect($this->policy->validate($this->bureau, $bureauSheet, '123456789'))->toBeFalse()
+        ->and($this->policy->validate($this->bureau, $bureauSheet, '1234567890'))->toBeTrue();
+
+    $inactiveBureau = TimesheetFixtures::user(Role::BureauDirection);
+    $inactiveEmployee = TimesheetFixtures::employee($inactiveBureau);
+    $inactiveSheet = TimesheetFixtures::timesheet($inactiveEmployee, week: '2026-11-09', status: TimesheetStatus::PretePourValidation);
+    TimesheetFixtures::audit($inactiveSheet, AuditAction::TimesheetCreated, $inactiveBureau);
+    TimesheetFixtures::audit($inactiveSheet, AuditAction::TimesheetSubmitted, $inactiveBureau);
+    TimesheetFixtures::audit($inactiveSheet, AuditAction::TimesheetReadyForValidation, $this->chefUser, 'Contrôle satisfaisant');
+    $inactiveBureau->forceFill(['is_active' => false])->save();
+
+    expect($this->policy->validate($inactiveBureau, $inactiveSheet, '1234567890'))->toBeFalse();
+});
+
+it('refuses self-validation to a chef, a conducteur and the administrator', function (): void {
+    $admin = TimesheetFixtures::user(Role::Admin);
+    $cases = [
+        [$this->chefEmployee, '2026-11-02', $this->chefUser],
+        [$this->conducteurEmployee, '2026-11-09', $this->conducteurUser],
+        [TimesheetFixtures::employee($admin), '2026-11-16', $admin],
+    ];
+
+    foreach ($cases as [$employee, $week, $actor]) {
+        $timesheet = TimesheetFixtures::timesheet($employee, week: $week, status: TimesheetStatus::PretePourValidation);
+        TimesheetFixtures::audit($timesheet, AuditAction::TimesheetCreated, $actor);
+        TimesheetFixtures::audit($timesheet, AuditAction::TimesheetSubmitted, $actor);
+        TimesheetFixtures::audit($timesheet, AuditAction::TimesheetReadyForValidation, $this->chefUser, 'Contrôle satisfaisant');
+
+        expect($this->policy->validate($actor, $timesheet, '1234567890'))->toBeFalse();
+    }
+});
+
+it('requires at least ten characters for every reasoned control action', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::AControler);
+
+    expect($this->policy->requestCorrection($this->chefUser, $timesheet, '123456789'))->toBeFalse()
+        ->and($this->policy->requestCorrection($this->chefUser, $timesheet, '1234567890'))->toBeTrue()
+        ->and($this->policy->markReadyForValidation($this->chefUser, $timesheet, '123456789'))->toBeFalse()
+        ->and($this->policy->markReadyForValidation($this->chefUser, $timesheet, '1234567890'))->toBeTrue();
+});
+
+it('refuses every business ability to an inactive account', function (): void {
+    $inactive = TimesheetFixtures::user(Role::BureauDirection);
+    $inactive->forceFill(['is_active' => false])->save();
+
+    $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::PretePourValidation);
+
+    expect($this->policy->viewAny($inactive))->toBeFalse()
+        ->and($this->policy->view($inactive, $timesheet))->toBeFalse()
+        ->and($this->policy->update($inactive, $timesheet))->toBeFalse()
+        ->and($this->policy->requestCorrection($inactive, $timesheet, 'Correction demandée'))->toBeFalse()
+        ->and($this->policy->markReadyForValidation($inactive, $timesheet, 'Contrôle satisfaisant'))->toBeFalse()
+        ->and($this->policy->validate($inactive, $timesheet, 'Auto-validation motivée'))->toBeFalse();
+});
+
+it('refuses a chef outside the perimeter and allows the Bureau to view globally', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    $outOfPerimeterChef = TimesheetFixtures::user(Role::ChefEquipe);
+
+    expect($this->policy->view($outOfPerimeterChef, $timesheet))->toBeFalse()
+        ->and($this->policy->view($this->bureau, $timesheet))->toBeTrue();
+});
+
 it('never allows physical deletion', function (): void {
     $timesheet = TimesheetFixtures::timesheet($this->owner);
 

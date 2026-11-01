@@ -3,6 +3,7 @@
 namespace App\Policies;
 
 use App\Enums\Permission;
+use App\Enums\Role;
 use App\Enums\TimesheetStatus;
 use App\Models\Timesheet;
 use App\Models\User;
@@ -130,7 +131,7 @@ class TimesheetPolicy
         return $this->canControl($actor, $timesheet);
     }
 
-    public function validate(User $actor, Timesheet $timesheet): bool
+    public function validate(User $actor, Timesheet $timesheet, ?string $reason = null): bool
     {
         if (! $this->transitionAllowed($timesheet, TimesheetStatus::Validee, null)) {
             return false;
@@ -140,19 +141,64 @@ class TimesheetPolicy
             return false;
         }
 
-        if ($this->isOwner($actor, $timesheet)) {
+        $selfValidation = $this->isOwner($actor, $timesheet);
+
+        // L'auto-validation est strictement réservée au Bureau / à la
+        // Direction : aucun autre rôle ne peut valider sa propre production,
+        // même s'il disposait un jour de `timesheet.validate`.
+        if ($selfValidation && $actor->role !== Role::BureauDirection) {
             return false;
         }
 
-        if ($this->history->isPreparedBy($actor, $timesheet)) {
+        if ($selfValidation && ! $this->hasValidReason($reason)) {
             return false;
         }
 
-        if ($this->history->hasControlled($actor, $timesheet)) {
+        // PC1-32 autorise explicitement l'auto-validation Bureau/Direction
+        // si un motif est fourni ; l'événement dédié est écrit par le service.
+        if (! $selfValidation && $this->history->isPreparedBy($actor, $timesheet)) {
+            return false;
+        }
+
+        if (! $selfValidation && $this->history->hasControlled($actor, $timesheet)) {
             return false;
         }
 
         return $this->history->hasCompleteTrail($timesheet);
+    }
+
+    /**
+     * Revue d'un chevauchement : capacité dédiée, rôle Bureau/Direction et
+     * statut du relevé autorisant un examen (à contrôler ou prête pour
+     * validation).
+     */
+    public function reviewOverlap(User $actor, Timesheet $timesheet): bool
+    {
+        return $actor->role === Role::BureauDirection
+            && $actor->hasPermission(Permission::TimesheetOverlapReview)
+            && $timesheet->status->allowsOverlapReview();
+    }
+
+    /**
+     * Validation en masse : capacité globale réservée au Bureau/Direction.
+     *
+     * La policy ne porte pas de relevé cible ; chaque feuille reste ensuite
+     * validée individuellement par `TimesheetPolicy::validate()`.
+     */
+    public function validateBatch(User $actor): bool
+    {
+        return $actor->role === Role::BureauDirection
+            && $actor->hasPermission(Permission::TimesheetValidate);
+    }
+
+    /**
+     * Consultation du journal global des relevés, réservée au
+     * Bureau/Direction disposant de la capacité de validation.
+     */
+    public function viewJournal(User $actor): bool
+    {
+        return $actor->role === Role::BureauDirection
+            && $actor->hasPermission(Permission::TimesheetValidate);
     }
 
     public function reopen(User $actor, Timesheet $timesheet, ?string $reason = null): bool
@@ -220,12 +266,6 @@ class TimesheetPolicy
 
     private function hasValidReason(?string $reason): bool
     {
-        if ($reason === null) {
-            return false;
-        }
-
-        $reason = trim($reason);
-
-        return $reason !== '' && mb_strlen($reason) <= TimesheetReason::MAX_LENGTH;
+        return TimesheetReason::isValidRequired($reason);
     }
 }

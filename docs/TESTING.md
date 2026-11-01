@@ -346,16 +346,43 @@ Un test d'intégration dédié, hors `RefreshDatabase`, pourra utiliser deux con
   périmètre, répétition et rollback.
 - `tests/Feature/Timesheets/TimesheetValidationServiceTest.php` : validation
   finale par un Bureau avec piste complète et événement attribué, refus si la
-  piste est incomplète, rôle insuffisant, propriétaire, préparateur, contrôleur
-  ou statut incompatible, répétition sans second événement et rollback ; refus
-  de valider lorsque les seuls événements de complétude sont antérieurs à la
-  dernière frontière ; réouverture motivée avec motif normalisé, refus d'un
-  motif invalide, d'un statut incompatible ou d'un acteur non habilité (même
-  avec un motif invalide), répétition et rollback ; édition des segments à
-  nouveau possible après réouverture ; parcours complet création → segment →
-  transmission → contrôle → validation ; nouveau cycle complet après
-  réouverture ; nouveau cycle après retour en correction et reprise, avec
-  nouvelle transmission et nouveau contrôle.
+  piste est incomplète, rôle insuffisant, conducteur, administrateur,
+  propriétaire, préparateur, contrôleur ou statut incompatible, répétition sans
+  second événement et rollback ; refus de valider lorsque les seuls événements
+  de complétude sont antérieurs à la dernière frontière ; réouverture motivée
+  avec motif normalisé, refus d'un motif invalide, d'un statut incompatible ou
+  d'un acteur non habilité (même avec un motif invalide), répétition et
+  rollback ; édition des segments à nouveau possible après réouverture ;
+  parcours complet création → segment → transmission → contrôle → validation ;
+  nouveau cycle complet après réouverture ; nouveau cycle après retour en
+  correction et reprise, avec nouvelle transmission et nouveau contrôle ;
+  Bureau ayant repris la correction autorisé à valider ensuite ; auto-validation
+  Bureau avec motif de 10 et 500 caractères accepté, refus à 9 et 501
+  caractères, motif normalisé et écrit sur les deux événements ; rollback des
+  deux événements d'auto-validation si l'audit échoue ; refus des chefs,
+  conducteurs, administrateurs et comptes inactifs.
+- `tests/Feature/Timesheets/TimesheetPolicyTest.php` (étendu) : conducteur et
+  administrateur interdits de validation, chef hors périmètre, motifs de
+  contrôle de 9 caractères refusés et de 10 acceptés, compte inactif refusé sur
+  les capacités métier, suppression physique toujours interdite.
+- `tests/Feature/Timesheets/TimesheetReasonTest.php` (étendu) : motif
+  obligatoire de 0, 9, 10, 500 et 501 caractères, espaces seuls refusés,
+  normalisation `trim()` avant validation et enregistrement.
+- `tests/Feature/Timesheets/TimesheetControlServiceTest.php` (étendu) : motifs
+  de contrôle de 9 caractères refusés, compte inactif refusé pour la demande de
+  correction, la préparation et la reprise, sans changement de statut ni audit.
+- `tests/Feature/Timesheets/TimesheetSubmissionServiceTest.php` (étendu) :
+  compte inactif refusé sans modification de statut ni événement de succès ;
+  Bureau propriétaire de `TimesheetOwn` mais non propriétaire du relevé refusé
+  pour la transmission, sans événement d'audit.
+- `tests/Feature/Access/ApprovalRulesTest.php` : auto-validation Bureau
+  enregistrée avec motif normalisé, refus d'un compte inactif, d'un
+  propriétaire différent de l'acteur, d'un chef, d'un conducteur ou de
+  l'administrateur, et d'un motif de 9 ou 501 caractères ; aucun événement
+  d'auto-validation n'est écrit lors d'un refus.
+- `tests/Feature/Timesheets/TimesheetInactivityTest.php` : un compte inactif ne
+  peut ni ouvrir un relevé, ni ajouter, modifier ou supprimer un segment, sans
+  création, modification ou événement d'audit indu.
 - `tests/Feature/Timesheets/TimesheetActorHistoryTest.php` (étendu) : la
   création reste l'origine globale du relevé, sans nouvel événement fabriqué
   après une frontière ; un contrôle antérieur à la dernière transmission du
@@ -410,3 +437,79 @@ puis 267 tests de suite réussis à l'exception d'un test ignoré Windows déjà
 existant (1884 assertions). Pint et PHPStan/Larastan sont verts. Aucun fichier
 frontend compilé séparément n'est nécessaire : l'interface utilise Livewire et
 les vues Blade existantes.
+
+## Couverture PC1-32 — Lot A : chevauchements persistants
+
+- `tests/Feature/Timesheets/TimesheetOverlapReviewTest.php` : paire canonique
+  unique quel que soit l'ordre de détection, deux chevauchements indépendants,
+  segments adjacents sans revue, permission dédiée refusée aux rôles non
+  Bureau (y compris avec `timesheet.validate`), refus hors des états `à
+  contrôler` et `prête pour validation`, décisions acceptée et rejetée avec
+  motif normalisé et événement d'audit dédié, motifs vide/9/501 caractères
+  refusés sans écriture, validation bloquée sans revue ou avec revue rejetée,
+  validation autorisée après acceptation, empreinte invalidée par modification
+  d'un segment, nouveau cycle de correction imposant une nouvelle revue,
+  correction supprimant le chevauchement sans revue inutile, et conservation
+  de l'historique d'audit (une ligne d'état courant, plusieurs événements).
+- `tests/Feature/Timesheets/TimesheetSchemaTest.php` (étendu) : la migration
+  `timesheet_overlap_reviews` est annulée puis rejouée avec les migrations des
+  relevés.
+
+Résultats observés localement : 15 tests ciblés réussis (64 assertions), puis
+suite complète à 503 tests dont 502 réussis et 1 ignoré (2 720 assertions). Pint
+et PHPStan sont verts.
+
+## Couverture PC1-32 — Lot B : validation en masse
+
+- `tests/Feature/Timesheets/TimesheetBatchValidationTest.php` : validation de
+  plusieurs relevés avec un événement `timesheet.validated` par succès ;
+  isolation d'un relevé déjà validé et d'un relevé préparé par l'acteur sans
+  compromettre les succès situés avant et après ; garde-fou des chevauchements
+  (non examiné, rejeté, accepté) appliqué par feuille ; maintien de la règle
+  d'auto-validation motivée du Lot C ; déduplication des identifiants ; limite
+  de 50 acceptée et 51 refusée avant traitement ; sélection vide ou malformée
+  refusée ; contrôle du rôle Bureau/Direction et de `timesheet.validate` (y
+  compris avec une dérogation de validation accordée à un non-Bureau et pour un
+  compte inactif) ; isolation et journalisation d'une erreur technique
+  inattendue avec poursuite du lot.
+- `TimesheetPolicy::validateBatch()` : capacité globale réservée au
+  Bureau/Direction disposant de `timesheet.validate`.
+
+Résultats observés localement : 9 tests ciblés réussis (72 assertions), puis
+suite complète à 512 tests dont 511 réussis et 1 ignoré (2 792 assertions). Pint
+et PHPStan sont verts.
+
+## Couverture PC1-32 — Lot D : interfaces métier
+
+- `tests/Feature/Timesheets/WorkspaceEmployeeTest.php` : redirection vers
+  l'espace salarié, tableau de bord et semaine, ouverture d'un brouillon via
+  `TimesheetService`, ajout/modification/suppression de segments via
+  `TimesheetSegmentService`, chevauchement affiché sans blocage, refus
+  d'écriture sur un relevé non brouillon, transmission, affichage du motif de
+  correction, reprise via `TimesheetControlService` et nouvelle transmission,
+  refus de la fiche d'un autre salarié par route et par composant, blocage de
+  la file des chevauchements pour un salarié et verrouillage de l'identifiant
+  du composant de détail.
+- `tests/Feature/Timesheets/WorkspaceTeamTest.php` : tableau de bord et liste
+  limités au périmètre, absence du salarié hors équipe, refus de la fiche hors
+  périmètre, retour pour correction et préparation à la validation motivés,
+  refus de la validation finale et de la revue des chevauchements par appel
+  direct, et équivalence entre la portée SQL de `TimesheetQuery` et
+  `TimesheetPerimeter` sur des périodes historisées.
+- `tests/Feature/Timesheets/WorkspaceBureauTest.php` : accès aux files et
+  tableaux de bord, revue de chevauchement acceptée et rejetée avec motif
+  obligatoire, revue obsolète après un nouveau cycle de correction et nouvelle
+  décision, validation individuelle, auto-validation Bureau motivée avec ses
+  deux événements d'audit, réouverture motivée, validation en masse avec
+  résultat partiel et détail par relevé, refus d'une sélection vide ou de plus
+  de 50 éléments, journal global filtré côté serveur.
+- `tests/Feature/Timesheets/WorkspaceSecurityTest.php` : redirection des
+  invités, refus des pages Bureau pour l'Administrateur, le conducteur, le chef
+  d'équipe et l'ouvrier, refus du tableau de bord d'équipe sans
+  `timesheet.control`, refus des composants de validation en masse et de
+  journal pour un chef, et refus des files de contrôle après modification d'une
+  propriété Livewire par un salarié.
+
+Résultats observés localement : 41 tests ciblés réussis (208 assertions), puis
+suite complète à 553 tests dont 552 réussis et 1 ignoré (3 000 assertions). Pint
+et PHPStan sont verts.

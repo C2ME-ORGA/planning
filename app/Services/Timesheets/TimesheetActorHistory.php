@@ -149,12 +149,70 @@ final class TimesheetActorHistory
     private function latestCycleBoundary(Timesheet $timesheet): ?AuditEvent
     {
         return $this->baseQuery($timesheet)
-            ->whereIn('action', [
-                AuditAction::TimesheetReopened->value,
-                AuditAction::TimesheetCorrectionResumed->value,
-            ])
+            ->whereIn('action', $this->cycleBoundaryActions())
             ->orderByDesc('sequence')
             ->first();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function cycleBoundaryActions(): array
+    {
+        return [
+            AuditAction::TimesheetReopened->value,
+            AuditAction::TimesheetCorrectionResumed->value,
+        ];
+    }
+
+    /**
+     * Séquence du cycle de correction courant, 0 pour le cycle initial.
+     *
+     * Sert à invalider les revues de chevauchement dès qu'une correction est
+     * reprise ou qu'un relevé validé est réouvert, même si les segments n'ont
+     * pas changé.
+     */
+    public function currentCycleSequence(Timesheet $timesheet): int
+    {
+        $sequence = $this->baseQuery($timesheet)
+            ->whereIn('action', $this->cycleBoundaryActions())
+            ->max('sequence');
+
+        return $sequence === null ? 0 : (int) $sequence;
+    }
+
+    /**
+     * Séquences de cycle courantes pour plusieurs relevés, en une requête.
+     *
+     * @param  array<int, int>  $timesheetIds
+     * @return array<int, int>
+     */
+    public function currentCycleSequences(array $timesheetIds): array
+    {
+        $ids = array_values(array_unique(array_map(
+            static fn (mixed $id): int => (int) $id,
+            $timesheetIds,
+        )));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $sequences = AuditEvent::query()
+            ->where('subject_type', Timesheet::class)
+            ->whereIn('subject_id', array_map(static fn (int $id): string => (string) $id, $ids))
+            ->whereIn('action', $this->cycleBoundaryActions())
+            ->selectRaw('subject_id, MAX(sequence) as aggregate')
+            ->groupBy('subject_id')
+            ->pluck('aggregate', 'subject_id');
+
+        $result = array_fill_keys($ids, 0);
+
+        foreach ($sequences as $subjectId => $sequence) {
+            $result[(int) $subjectId] = (int) $sequence;
+        }
+
+        return $result;
     }
 
     /**
