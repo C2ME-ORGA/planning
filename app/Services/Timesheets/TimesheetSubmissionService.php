@@ -44,15 +44,15 @@ class TimesheetSubmissionService
 
     public function submit(Timesheet $timesheet, User $actor): Timesheet
     {
-        if (! $actor->isActive()) {
-            throw new AuthorizationException('Ce compte ne peut pas transmettre un relevé.');
-        }
-
         return DB::transaction(function () use ($timesheet, $actor): Timesheet {
             $locked = Timesheet::query()
                 ->whereKey($timesheet->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
+
+            if (! $actor->isActive()) {
+                throw new AuthorizationException('Ce compte ne peut pas transmettre un relevé.');
+            }
 
             $this->assertOwnedBy($locked, $actor);
 

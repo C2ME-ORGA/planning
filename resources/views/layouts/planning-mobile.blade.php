@@ -26,10 +26,13 @@
                 </div>
 
                 @auth
-                    <p class="text-right text-xs text-stone-600">
-                        <span class="block font-medium text-stone-900">{{ auth()->user()->name }}</span>
-                        {{ auth()->user()->role->label() }}
-                    </p>
+                    <div class="text-right text-xs text-stone-600">
+                        <p>
+                            <span class="block font-medium text-stone-900">{{ auth()->user()->name }}</span>
+                            {{ auth()->user()->role->label() }}
+                        </p>
+                        <a href="{{ route('workspace.home') }}" class="mt-2 inline-block font-semibold text-amber-800 underline underline-offset-4 hover:text-amber-900">Espace métier</a>
+                    </div>
                 @endauth
             </div>
         </header>

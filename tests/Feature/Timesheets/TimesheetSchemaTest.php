@@ -152,11 +152,13 @@ it('reverses the timesheet migrations on an isolated database', function (): voi
         $schema = Schema::connection('migration_test');
 
         expect($schema->hasTable('timesheets'))->toBeTrue()
-            ->and($schema->hasTable('timesheet_segments'))->toBeTrue();
+            ->and($schema->hasTable('timesheet_segments'))->toBeTrue()
+            ->and($schema->hasTable('timesheet_overlap_reviews'))->toBeTrue();
 
         $exitCode = Artisan::call('migrate:rollback', [
             '--database' => 'migration_test',
             '--path' => [
+                'database/migrations/2026_11_01_000001_create_timesheet_overlap_reviews_table.php',
                 'database/migrations/2026_10_28_000001_create_timesheets_table.php',
                 'database/migrations/2026_10_28_000002_create_timesheet_segments_table.php',
             ],
@@ -164,12 +166,14 @@ it('reverses the timesheet migrations on an isolated database', function (): voi
         ]);
 
         expect($exitCode)->toBe(0)
+            ->and($schema->hasTable('timesheet_overlap_reviews'))->toBeFalse()
             ->and($schema->hasTable('timesheet_segments'))->toBeFalse()
             ->and($schema->hasTable('timesheets'))->toBeFalse();
 
         TemporaryDatabase::migrate($database);
 
         expect($schema->hasTable('timesheets'))->toBeTrue()
-            ->and($schema->hasTable('timesheet_segments'))->toBeTrue();
+            ->and($schema->hasTable('timesheet_segments'))->toBeTrue()
+            ->and($schema->hasTable('timesheet_overlap_reviews'))->toBeTrue();
     });
 });

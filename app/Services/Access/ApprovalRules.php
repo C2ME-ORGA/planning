@@ -8,7 +8,9 @@ use App\Enums\Role;
 use App\Models\AuditEvent;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
+use App\Support\TimesheetReason;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\ValidationException;
 use RuntimeException;
 
 /**
@@ -51,6 +53,10 @@ class ApprovalRules
      */
     public function recordSelfApproval(User $actor, int $ownerId, Model $subject, string $reason): AuditEvent
     {
+        if (! $actor->isActive()) {
+            throw new RuntimeException('Un compte inactif ne peut pas enregistrer une auto-validation.');
+        }
+
         if ($actor->getKey() !== $ownerId) {
             throw new RuntimeException('Cette opération ne concerne pas une auto-validation.');
         }
@@ -59,15 +65,25 @@ class ApprovalRules
             throw new RuntimeException('L’auto-validation est réservée au Bureau / à la Direction.');
         }
 
-        if (mb_strlen(trim($reason)) < 10) {
-            throw new RuntimeException('Un motif d’au moins 10 caractères est requis pour une auto-validation.');
+        try {
+            $normalizedReason = TimesheetReason::required($reason);
+        } catch (ValidationException $exception) {
+            throw new RuntimeException(
+                sprintf(
+                    'Un motif valide de %d à %d caractères est requis pour une auto-validation.',
+                    TimesheetReason::MIN_LENGTH,
+                    TimesheetReason::MAX_LENGTH,
+                ),
+                0,
+                $exception,
+            );
         }
 
         return $this->audit->record(
             AuditAction::SelfApprovalRecorded,
             $subject,
             ['owner_id' => $ownerId],
-            $reason,
+            $normalizedReason,
             $actor,
         );
     }

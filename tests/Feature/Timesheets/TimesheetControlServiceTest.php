@@ -219,3 +219,42 @@ it('rolls back the ready-for-validation transition when the audit fails', functi
     expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::AControler)
         ->and(AuditEvent::query()->where('action', AuditAction::TimesheetReadyForValidation->value)->count())->toBe(0);
 });
+
+it('requires at least ten characters for control reasons', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::AControler);
+
+    expect(fn (): Timesheet => $this->service->requestCorrection($timesheet, '123456789', $this->chefUser))
+        ->toThrow(ValidationException::class);
+
+    expect(fn (): Timesheet => $this->service->markReadyForValidation($timesheet, '123456789', $this->chefUser))
+        ->toThrow(ValidationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::AControler)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetReturnedForCorrection->value)->count())->toBe(0)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetReadyForValidation->value)->count())->toBe(0);
+});
+
+it('refuses every control action by an inactive account', function (): void {
+    $toControl = TimesheetFixtures::timesheet($this->owner, week: '2026-11-02', status: TimesheetStatus::AControler);
+    $toResume = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09', status: TimesheetStatus::ACorriger);
+
+    $this->chefUser->forceFill(['is_active' => false])->save();
+    $this->ownerUser->forceFill(['is_active' => false])->save();
+
+    expect(fn (): Timesheet => $this->service->requestCorrection($toControl, 'Correction demandée', $this->chefUser))
+        ->toThrow(AuthorizationException::class);
+
+    expect(fn (): Timesheet => $this->service->markReadyForValidation($toControl, 'Contrôle satisfaisant', $this->chefUser))
+        ->toThrow(AuthorizationException::class);
+
+    expect(fn (): Timesheet => $this->service->resumeCorrection($toResume, $this->ownerUser))
+        ->toThrow(AuthorizationException::class);
+
+    expect($toControl->fresh()?->status)->toBe(TimesheetStatus::AControler)
+        ->and($toResume->fresh()?->status)->toBe(TimesheetStatus::ACorriger)
+        ->and(AuditEvent::query()->whereIn('action', [
+            AuditAction::TimesheetReturnedForCorrection->value,
+            AuditAction::TimesheetReadyForValidation->value,
+            AuditAction::TimesheetCorrectionResumed->value,
+        ])->count())->toBe(0);
+});

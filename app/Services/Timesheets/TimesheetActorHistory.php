@@ -149,12 +149,36 @@ final class TimesheetActorHistory
     private function latestCycleBoundary(Timesheet $timesheet): ?AuditEvent
     {
         return $this->baseQuery($timesheet)
-            ->whereIn('action', [
-                AuditAction::TimesheetReopened->value,
-                AuditAction::TimesheetCorrectionResumed->value,
-            ])
+            ->whereIn('action', $this->cycleBoundaryActions())
             ->orderByDesc('sequence')
             ->first();
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function cycleBoundaryActions(): array
+    {
+        return [
+            AuditAction::TimesheetReopened->value,
+            AuditAction::TimesheetCorrectionResumed->value,
+        ];
+    }
+
+    /**
+     * Séquence du cycle de correction courant, 0 pour le cycle initial.
+     *
+     * Sert à invalider les revues de chevauchement dès qu'une correction est
+     * reprise ou qu'un relevé validé est réouvert, même si les segments n'ont
+     * pas changé.
+     */
+    public function currentCycleSequence(Timesheet $timesheet): int
+    {
+        $sequence = $this->baseQuery($timesheet)
+            ->whereIn('action', $this->cycleBoundaryActions())
+            ->max('sequence');
+
+        return $sequence === null ? 0 : (int) $sequence;
     }
 
     /**

@@ -21,6 +21,17 @@ it('refuses a required reason that is missing or blank', function (): void {
     }
 });
 
+it('requires at least ten characters after trimming', function (): void {
+    expect(fn (): string => TimesheetReason::required('123456789'))
+        ->toThrow(ValidationException::class);
+
+    expect(TimesheetReason::required('  1234567890  '))->toBe('1234567890');
+});
+
+it('accepts exactly ten characters after trimming', function (): void {
+    expect(TimesheetReason::required(str_repeat('a', 10)))->toBe(str_repeat('a', 10));
+});
+
 it('accepts exactly 500 characters and refuses 501', function (): void {
     expect(mb_strlen(TimesheetReason::required(str_repeat('a', 500))))->toBe(500);
 

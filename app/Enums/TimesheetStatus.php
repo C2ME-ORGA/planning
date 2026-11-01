@@ -64,6 +64,15 @@ enum TimesheetStatus: string
     }
 
     /**
+     * La revue des chevauchements n'est possible qu'une fois le relevé
+     * transmis, avant la validation finale.
+     */
+    public function allowsOverlapReview(): bool
+    {
+        return in_array($this, [self::AControler, self::PretePourValidation], true);
+    }
+
+    /**
      * Le motif est obligatoire pour les retours en correction, la préparation
      * à la validation et la réouverture d'un relevé validé.
      */

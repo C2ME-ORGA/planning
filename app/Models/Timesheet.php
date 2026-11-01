@@ -109,4 +109,12 @@ class Timesheet extends Model
     {
         return $this->hasMany(TimesheetSegment::class)->orderBy('start_at');
     }
+
+    /**
+     * @return HasMany<TimesheetOverlapReview, $this>
+     */
+    public function overlapReviews(): HasMany
+    {
+        return $this->hasMany(TimesheetOverlapReview::class);
+    }
 }
