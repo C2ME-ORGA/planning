@@ -118,6 +118,11 @@ it('allows direct transmission of a corrected draft to the Bureau only, with a r
     $locked = TimesheetFixtures::timesheet($this->owner, week: '2026-11-16', status: TimesheetStatus::AControler);
 
     expect($this->policy->sendToValidation($this->bureau, $locked, 'Correction effectuée par le Bureau.'))->toBeFalse();
+
+    $draft = TimesheetFixtures::timesheet($this->owner, week: '2026-11-23');
+
+    expect($this->policy->markReadyForValidation($this->chefUser, $draft, 'Contrôle satisfaisant'))->toBeFalse()
+        ->and($this->policy->markReadyForValidation($this->bureau, $draft, 'Contrôle satisfaisant'))->toBeFalse();
 });
 
 it('requires the control perimeter and a reason to return or prepare a timesheet', function (): void {

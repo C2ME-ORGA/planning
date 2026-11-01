@@ -98,8 +98,8 @@ différé au Lot 7 et n'est pas bloquant pour PC1-31.
 
 | Contrôle | Résultat |
 |---|---|
-| Tests ciblés Lot 5 | 304 tests, 1 180 assertions, 0 échec |
-| Suite complète | 589 tests, 588 réussis, 1 ignoré, 3 142 assertions |
+| Tests ciblés Lot 5 | 305 tests, 1 186 assertions, 0 échec |
+| Suite complète | 590 tests, 589 réussis, 1 ignoré, 3 148 assertions |
 | Laravel Pint `--test` | Vert |
 | PHPStan / Larastan | 0 erreur |
 | `git diff --check` | Propre |

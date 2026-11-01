@@ -567,6 +567,6 @@ Commande ciblée :
 php artisan test tests/Feature/Timesheets tests/Unit/LocalDateTimeResolverTest.php tests/Unit/WorkedTimeCalculatorTest.php tests/Unit/TimesheetEnumsTest.php tests/Unit/TimesheetStatusTest.php
 ```
 
-Résultats observés localement : 304 tests ciblés réussis (1 180 assertions),
-puis suite complète à 589 tests dont 588 réussis et 1 ignoré (3 142
+Résultats observés localement : 305 tests ciblés réussis (1 186 assertions),
+puis suite complète à 590 tests dont 589 réussis et 1 ignoré (3 148
 assertions). Pint `--test` est vert et PHPStan ne remonte aucune erreur.

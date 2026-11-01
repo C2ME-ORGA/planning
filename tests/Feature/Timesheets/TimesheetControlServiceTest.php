@@ -208,6 +208,26 @@ it('does not create a second ready-for-validation event on a repeated request', 
     expect(AuditEvent::query()->where('action', AuditAction::TimesheetReadyForValidation->value)->count())->toBe(1);
 });
 
+it('refuses to mark a draft ready for validation outside the control step', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment($timesheet);
+
+    expect(fn (): Timesheet => $this->service->markReadyForValidation(
+        $timesheet,
+        'Contrôle satisfaisant',
+        $this->chefUser,
+    ))->toThrow(AuthorizationException::class);
+
+    expect(fn (): Timesheet => $this->service->markReadyForValidation(
+        $timesheet,
+        'Contrôle satisfaisant',
+        $this->bureau,
+    ))->toThrow(AuthorizationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetReadyForValidation->value)->count())->toBe(0);
+});
+
 it('rolls back the ready-for-validation transition when the audit fails', function (): void {
     $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::AControler);
 

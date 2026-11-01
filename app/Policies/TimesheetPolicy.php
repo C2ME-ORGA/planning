@@ -124,6 +124,12 @@ class TimesheetPolicy
 
     public function markReadyForValidation(User $actor, Timesheet $timesheet, ?string $reason = null): bool
     {
+        // Seul un relevé déjà contrôlé peut être préparé ; un brouillon relève
+        // de la transmission directe du Bureau (`sendToValidation`).
+        if ($timesheet->status !== TimesheetStatus::AControler) {
+            return false;
+        }
+
         if (! $this->transitionAllowed($timesheet, TimesheetStatus::PretePourValidation, $reason)) {
             return false;
         }
