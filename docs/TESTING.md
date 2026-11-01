@@ -513,3 +513,33 @@ et PHPStan sont verts.
 Résultats observés localement : 41 tests ciblés réussis (208 assertions), puis
 suite complète à 553 tests dont 552 réussis et 1 ignoré (3 000 assertions). Pint
 et PHPStan sont verts.
+
+## Couverture de finalisation Lot 5 — PC1-31 / PC1-33
+
+- `tests/Feature/Timesheets/TimesheetSegmentServiceTest.php` (étendu) : une
+  modification directe du modèle `TimesheetSegment` est refusée hors brouillon,
+  même quand le service n'est pas utilisé ; le segment stocké reste inchangé.
+  La suppression directe hors brouillon reste couverte par le test existant.
+- `tests/Feature/Timesheets/WorkspaceEmployeeTest.php` (étendu) : un segment de
+  13 heures affiche l'avertissement de durée non bloquant dans la semaine et
+  dans la fiche détail, sans changer le statut ni supprimer le segment.
+- `tests/Feature/Timesheets/TimesheetValidationServiceTest.php` (étendu) : après
+  une réouverture et un second cycle, l'historique contient toujours les deux
+  transmissions et les deux validations, la création unique et l'événement de
+  réouverture ; l'ordre des séquences est strictement croissant et la première
+  validation précède la réouverture.
+- `tests/Feature/Timesheets/TimesheetOverlapReviewTest.php` (étendu) : une
+  erreur d'audit annule l'écriture de la revue de chevauchement et ne laisse ni
+  état courant ni événement de décision.
+- `tests/Unit/WorkedTimeCalculatorTest.php` (existant, vérifié) : 720 minutes
+  ne produisent aucun avertissement, 721 minutes en produisent un.
+
+Commande ciblée :
+
+```
+php artisan test tests/Feature/Timesheets tests/Unit/LocalDateTimeResolverTest.php tests/Unit/WorkedTimeCalculatorTest.php tests/Unit/TimesheetEnumsTest.php tests/Unit/TimesheetStatusTest.php
+```
+
+Résultats observés localement : 283 tests ciblés réussis (1 101 assertions),
+puis suite complète à 568 tests dont 567 réussis et 1 ignoré (3 063
+assertions). Pint `--test` est vert et PHPStan ne remonte aucune erreur.

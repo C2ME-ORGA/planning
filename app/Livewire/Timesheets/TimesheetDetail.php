@@ -237,6 +237,7 @@ class TimesheetDetail extends Component
             'events' => $history->presentMany($events),
             'latestCorrection' => $history->latestCorrectionRequest($events),
             'overlaps' => $overlaps,
+            'durationWarnings' => $summary->durationWarnings($timesheet),
             'summary' => $summary,
             'totalMinutes' => $summary->totalMinutes($timesheet),
             'canSubmit' => Gate::forUser($actor)->allows('submit', $timesheet),

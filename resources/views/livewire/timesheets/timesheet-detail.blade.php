@@ -27,6 +27,8 @@
         </div>
     @endif
 
+    <x-duration-warnings :warnings="$durationWarnings" :summary="$summary" />
+
     <div class="grid gap-6 lg:grid-cols-3">
         <section aria-labelledby="segments-heading" class="space-y-3 lg:col-span-2">
             <div class="flex flex-wrap items-center justify-between gap-2">

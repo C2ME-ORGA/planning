@@ -9,6 +9,7 @@ use App\Models\Employee;
 use App\Models\Timesheet;
 use App\Models\User;
 use App\Services\Timesheets\TimesheetControlService;
+use App\Services\Timesheets\TimesheetHistory;
 use App\Services\Timesheets\TimesheetSegmentService;
 use App\Services\Timesheets\TimesheetService;
 use App\Services\Timesheets\TimesheetSubmissionService;
@@ -322,6 +323,17 @@ it('validates a new cycle after a reopening', function (): void {
             ->where('action', AuditAction::TimesheetReopened->value)
             ->where('subject_id', (string) $timesheet->getKey())
             ->count())->toBe(1);
+
+    $events = app(TimesheetHistory::class)->eventsFor($timesheet->fresh() ?? $timesheet);
+    $sequences = $events->pluck('sequence')->all();
+    $firstValidation = $events->firstWhere('action', AuditAction::TimesheetValidated);
+    $reopening = $events->firstWhere('action', AuditAction::TimesheetReopened);
+
+    expect($sequences)->toBe(collect($sequences)->sort()->values()->all())
+        ->and($firstValidation?->sequence)->toBeLessThan($reopening?->sequence)
+        ->and($events->where('action', AuditAction::TimesheetValidated)->count())->toBe(2)
+        ->and($events->where('action', AuditAction::TimesheetSubmitted)->count())->toBe(2)
+        ->and($events->where('action', AuditAction::TimesheetCreated)->count())->toBe(1);
 });
 
 it('validates after a return to correction and a resume', function (): void {

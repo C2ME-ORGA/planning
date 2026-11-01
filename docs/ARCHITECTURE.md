@@ -335,6 +335,13 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   nouvel événement ; ce retour ne rejoue pas les contrôles de contenu et
   n'écrit ni transition ni audit. Aucune clé d'idempotence réseau n'est
   introduite (Lot 10).
+- **Avertissements de durée** : `WorkedTimeCalculator` signale tout segment
+  strictement supérieur à 720 minutes (12 h). La règle est appliquée à la
+  soumission et projetée en lecture par `TimesheetSummary::durationWarnings()`.
+  L'interface hebdomadaire et la fiche détail affichent cet avertissement de
+  façon non bloquante : aucun segment n'est déplacé, tronqué ou refusé du seul
+  fait de sa durée. Un segment de 720 minutes exactement n'est pas signalé ;
+  721 minutes le sont.
 - **Audit des segments** : les ajouts, modifications et suppressions réutilisent
   `timesheet.updated`. L'événement porte `operation`, l'identifiant du segment,
   les champs modifiés et les valeurs utiles (catégorie, instants UTC). Une
@@ -372,12 +379,15 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   si la piste requise est incomplète ou non attribuable. Le contrôle et la
   réouverture suivent le même modèle dans `TimesheetControlService` et
   `TimesheetValidationService` (§3.6).
-- **Garde de suppression** : `TimesheetSegment::deleting` refuse la suppression
-  hors brouillon en défense en profondeur. Le service reste l'autorité
-  principale. Limite : les suppressions de masse Eloquent
-  (`query()->delete()`, `destroy()`) et les écritures directes via Query Builder
-  ne déclenchent pas les événements du modèle et ne sont donc pas couvertes par
-  ce garde. Aucun trigger SQL n'est ajouté.
+- **Garde d'écriture** : `TimesheetSegment::updating` et
+  `TimesheetSegment::deleting` refusent toute modification ou suppression hors
+  brouillon en défense en profondeur. Le service reste l'autorité principale.
+  Limite : les mises à jour ou suppressions de masse Eloquent
+  (`query()->update()`, `query()->delete()`, `destroy()`) et les écritures
+  directes via Query Builder ne déclenchent pas les événements du modèle et ne
+  sont donc pas couvertes par ces gardes. Elles restent réservées aux
+  traitements d'import ou de maintenance, qui doivent revalider le statut du
+  relevé. Aucun trigger SQL n'est ajouté.
 - **Reporté** : le motif obligatoire pour une journée attendue sans heure
   dépend du planning et des absences (Lot 7). Le contrôle, la reprise de
   correction, la validation finale, la réouverture, le contrôle groupé,
@@ -427,6 +437,15 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
 - **Reporté** : le contrôle groupé, les tableaux de bord et l'interface restent
   hors périmètre de 2C. Le motif obligatoire d'une journée attendue sans heure
   reste différé au Lot 7. Aucune migration n'était nécessaire pour 2C.
+- **Réserve PC1-33 — correction directe par le Bureau/Direction** : la matrice
+  ne comporte pas `Brouillon → Prête pour validation`. Le Bureau peut modifier
+  un brouillon (policy `update`) mais le salarié propriétaire reste seul
+  autorisé à le transmettre ; un brouillon corrigé par le Bureau est donc rendu
+  au salarié pour transmission. Ce parcours est conservé en l'état : aucune
+  spécification Jira vérifiable dans le dépôt ne confirme qu'un passage direct
+  à la validation finale est requis. Toute évolution devrait définir l'action
+  d'audit, la règle de complétude du cycle, le motif éventuel et la séparation
+  des tâches (le préparateur ne devant pas devenir son propre validateur).
 - **Revue des chevauchements (PC1-32, Lot A)** : `TimesheetOverlapDetector`
   reste la source de détection, avec ses avertissements non bloquants à la
   transmission. `TimesheetOverlapReviewService` persiste l'état courant dans

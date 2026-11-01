@@ -346,6 +346,7 @@ class WeeklyTimesheet extends Component
             'totalMinutes' => $timesheet instanceof Timesheet ? $summary->totalMinutes($timesheet) : 0,
             'summary' => $summary,
             'latestCorrection' => $history->latestCorrectionRequest($events),
+            'durationWarnings' => $timesheet instanceof Timesheet ? $summary->durationWarnings($timesheet) : [],
             'overlaps' => $timesheet instanceof Timesheet ? $overview->forTimesheet($timesheet) : [],
             'canOpen' => $canOpen,
             'canEdit' => $timesheet instanceof Timesheet

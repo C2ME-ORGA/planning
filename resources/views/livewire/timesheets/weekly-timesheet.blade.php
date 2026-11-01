@@ -78,6 +78,8 @@
             @endif
         </section>
 
+        <x-duration-warnings :warnings="$durationWarnings" :summary="$summary" />
+
         @if ($timesheet)
             <section aria-labelledby="week-grid-heading" class="space-y-3">
                 <div class="flex flex-wrap items-center justify-between gap-2">

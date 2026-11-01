@@ -237,6 +237,21 @@ it('refuses a direct model deletion outside the draft state', function (): void 
     expect(TimesheetSegment::query()->whereKey($segment->getKey())->exists())->toBeTrue();
 });
 
+it('refuses a direct model update outside the draft state', function (): void {
+    $locked = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09', status: TimesheetStatus::AControler);
+    $segment = TimesheetFixtures::segment(
+        $locked,
+        start: '2026-11-09 08:00:00',
+        end: '2026-11-09 12:00:00',
+    );
+
+    expect(fn () => $segment->update([
+        'end_at' => CarbonImmutable::parse('2026-11-09 13:00:00', 'Europe/Paris')->utc(),
+    ]))->toThrow(LogicException::class);
+
+    expect($segment->fresh()?->end_at?->setTimezone('Europe/Paris')->format('H:i'))->toBe('12:00');
+});
+
 it('rolls back the segment write when the audit fails', function (): void {
     config(['planning.audit.key' => 'trop-court']);
 

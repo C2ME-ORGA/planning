@@ -151,6 +151,32 @@ it('adds, modifies and deletes a segment while signalling overlaps without block
     expect($timesheet->segments()->count())->toBe(1);
 });
 
+it('signals a segment longer than twelve hours without blocking the entry', function (): void {
+    [$ownerUser, $owner] = workspaceEmployeeContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    TimesheetFixtures::segment(
+        $timesheet,
+        start: '2026-11-02 06:00:00',
+        end: '2026-11-02 19:00:00',
+    );
+
+    $this->actingAs($ownerUser);
+
+    Livewire::test(WeeklyTimesheet::class, ['week' => '2026-11-02'])
+        ->assertOk()
+        ->assertSee('Avertissement de durée')
+        ->assertSee('plus de 12 heures')
+        ->assertSee('13 h');
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertOk()
+        ->assertSee('Avertissement de durée')
+        ->assertSee('plus de 12 heures');
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and($timesheet->segments()->count())->toBe(1);
+});
+
 it('refuses to edit a locked timesheet and keeps the stored segments intact', function (): void {
     [$ownerUser, $owner] = workspaceEmployeeContext();
     $timesheet = TimesheetFixtures::timesheet(

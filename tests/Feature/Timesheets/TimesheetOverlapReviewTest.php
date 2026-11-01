@@ -343,6 +343,30 @@ it('records a rejected decision as a distinct audit event', function (): void {
             ->count())->toBe(0);
 });
 
+it('rolls back the overlap review when the audit fails', function (): void {
+    $timesheet = pc132ReviewableTimesheet($this->owner, $this->ownerUser, $this->chefUser);
+    [$first, $second] = pc132AddOverlap($timesheet);
+
+    config(['planning.audit.key' => 'trop-court']);
+
+    expect(fn () => $this->reviews->review(
+        $timesheet,
+        $first->id,
+        $second->id,
+        OverlapReviewDecision::Accepted,
+        'Déplacement justifié par le chantier.',
+        $this->bureau,
+    ))->toThrow(RuntimeException::class, 'PLANNING_AUDIT_KEY');
+
+    expect(TimesheetOverlapReview::query()->count())->toBe(0)
+        ->and(AuditEvent::query()
+            ->whereIn('action', [
+                AuditAction::TimesheetOverlapReviewAccepted->value,
+                AuditAction::TimesheetOverlapReviewRejected->value,
+            ])
+            ->count())->toBe(0);
+});
+
 it('refuses every invalid review reason without side effects', function (): void {
     $timesheet = pc132ReviewableTimesheet($this->owner, $this->ownerUser, $this->chefUser);
     [$first, $second] = pc132AddOverlap($timesheet);
@@ -455,9 +479,11 @@ it('blocks validation when a segment changed after the review', function (): voi
         $this->bureau,
     );
 
-    $second->update([
-        'start_at' => pc132OverlapInstant('2026-11-02 11:30:00'),
-        'end_at' => pc132OverlapInstant('2026-11-02 13:30:00'),
+    // Modification hors modèle (import ou correction directe en base) : elle
+    // doit invalider l'empreinte sans passer par le service de saisie.
+    DB::table('timesheet_segments')->where('id', $second->getKey())->update([
+        'start_at' => pc132OverlapInstant('2026-11-02 11:30:00')->utc()->format('Y-m-d H:i:s'),
+        'end_at' => pc132OverlapInstant('2026-11-02 13:30:00')->utc()->format('Y-m-d H:i:s'),
     ]);
 
     expect(fn (): Timesheet => $this->validation->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau))

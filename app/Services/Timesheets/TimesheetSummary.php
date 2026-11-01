@@ -5,6 +5,7 @@ namespace App\Services\Timesheets;
 use App\Models\Timesheet;
 use App\Models\TimesheetSegment;
 use App\Support\BusinessTime;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Collection;
 
 /**
@@ -68,6 +69,52 @@ final class TimesheetSummary
         ksort($minutes);
 
         return $minutes;
+    }
+
+    /**
+     * Avertissements non bloquants de durée d'un relevé.
+     *
+     * La règle reste portée par `WorkedTimeCalculator` : un segment
+     * strictement supérieur à 12 heures est signalé. Cette projection ne
+     * modifie ni ne supprime aucun segment.
+     *
+     * @return array<int, array{
+     *     segment_id: int,
+     *     minutes: int,
+     *     threshold_minutes: int,
+     *     start_at: CarbonImmutable,
+     *     end_at: CarbonImmutable
+     * }>
+     */
+    public function durationWarnings(Timesheet $timesheet): array
+    {
+        $warnings = [];
+
+        foreach ($this->segments($timesheet) as $segment) {
+            $start = $segment->start_at;
+            $end = $segment->end_at;
+
+            if ($start === null || $end === null) {
+                continue;
+            }
+
+            $minutes = $this->segmentMinutes($segment);
+            $segmentWarnings = $this->calculator->warningsForDuration($minutes);
+
+            if ($segmentWarnings === []) {
+                continue;
+            }
+
+            $warnings[] = [
+                'segment_id' => (int) $segment->getKey(),
+                'minutes' => $minutes,
+                'threshold_minutes' => (int) $segmentWarnings[0]['threshold_minutes'],
+                'start_at' => $start,
+                'end_at' => $end,
+            ];
+        }
+
+        return $warnings;
     }
 
     /**
