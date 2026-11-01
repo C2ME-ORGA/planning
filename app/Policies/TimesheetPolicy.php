@@ -131,6 +131,29 @@ class TimesheetPolicy
         return $this->canControl($actor, $timesheet);
     }
 
+    /**
+     * Transmission directe à la validation d'un brouillon corrigé par le
+     * Bureau/Direction.
+     *
+     * Ce parcours remplace la transmission du salarié et le contrôle
+     * intermédiaire, mais reste réservé au Bureau/Direction et exige un motif.
+     * L'auteur est ensuite exclu de la validation finale d'un relevé dont il
+     * n'est pas propriétaire (voir `TimesheetActorHistory`).
+     */
+    public function sendToValidation(User $actor, Timesheet $timesheet, ?string $reason = null): bool
+    {
+        if ($timesheet->status !== TimesheetStatus::Brouillon) {
+            return false;
+        }
+
+        if (! $this->transitionAllowed($timesheet, TimesheetStatus::PretePourValidation, $reason)) {
+            return false;
+        }
+
+        return $actor->role === Role::BureauDirection
+            && $actor->hasPermission(Permission::TimesheetValidate);
+    }
+
     public function validate(User $actor, Timesheet $timesheet, ?string $reason = null): bool
     {
         if (! $this->transitionAllowed($timesheet, TimesheetStatus::Validee, null)) {

@@ -40,6 +40,8 @@ class TimesheetDetail extends Component
 
     public string $readyReason = '';
 
+    public string $directReason = '';
+
     public string $validationReason = '';
 
     public string $reopenReason = '';
@@ -120,6 +122,26 @@ class TimesheetDetail extends Component
 
         if ($done) {
             $this->readyReason = '';
+        }
+    }
+
+    public function sendToValidation(): void
+    {
+        $this->validate([
+            'directReason' => ['required', 'string', 'min:10', 'max:500'],
+        ]);
+
+        $actor = $this->actor();
+        $timesheet = $this->timesheet();
+
+        $done = $this->performWorkflow(
+            fn (): Timesheet => app(TimesheetControlService::class)
+                ->sendToValidation($timesheet, $this->directReason, $actor),
+            'Relevé transmis directement à la validation.',
+        );
+
+        if ($done) {
+            $this->directReason = '';
         }
     }
 
@@ -244,6 +266,8 @@ class TimesheetDetail extends Component
             'canResume' => Gate::forUser($actor)->allows('resumeCorrection', $timesheet),
             'canReturn' => Gate::forUser($actor)->allows('requestCorrection', [$timesheet, 'motif de contrôle']),
             'canMarkReady' => Gate::forUser($actor)->allows('markReadyForValidation', [$timesheet, 'motif de contrôle']),
+            'canSendToValidation' => $timesheet->segments->isNotEmpty()
+                && Gate::forUser($actor)->allows('sendToValidation', [$timesheet, 'motif de correction']),
             'canValidate' => $canValidate,
             'canReopen' => Gate::forUser($actor)->allows('reopen', [$timesheet, 'motif de réouverture']),
             'canReview' => $canReview,

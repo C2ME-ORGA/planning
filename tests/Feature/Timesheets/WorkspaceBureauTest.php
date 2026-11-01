@@ -287,6 +287,28 @@ it('runs a batch through the existing service and displays a partial outcome', f
         ->and($component->get('results')['partial'])->toBeTrue();
 });
 
+it('sends a Bureau-corrected draft directly to validation with a mandatory reason', function (): void {
+    [$bureau, , , , , $owner] = workspaceBureauContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    TimesheetFixtures::segment($timesheet);
+
+    $this->actingAs($bureau);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertSee('Transmettre directement à la validation')
+        ->set('directReason', 'Correction effectuée par le Bureau.')
+        ->call('sendToValidation')
+        ->assertHasNoErrors()
+        ->assertSee('Relevé transmis directement à la validation');
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetSentToValidation->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->where('actor_id', $bureau->getKey())
+            ->exists())->toBeTrue();
+});
+
 it('reopens a validated timesheet with a mandatory reason', function (): void {
     [$bureau, , , , , $owner] = workspaceBureauContext();
     $timesheet = TimesheetFixtures::timesheet(

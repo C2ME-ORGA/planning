@@ -493,6 +493,33 @@ it('blocks validation when a segment changed after the review', function (): voi
         ->and(AuditEvent::query()->where('action', AuditAction::TimesheetValidated->value)->count())->toBe(0);
 });
 
+it('still requires an overlap review before validating a direct Bureau transmission', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    [$first, $second] = pc132AddOverlap($timesheet);
+
+    $this->controls->sendToValidation(
+        $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    );
+
+    expect(fn (): Timesheet => $this->validation->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau))
+        ->toThrow(ValidationException::class, 'non examiné');
+
+    $this->reviews->review(
+        $timesheet,
+        $first->id,
+        $second->id,
+        OverlapReviewDecision::Accepted,
+        'Chevauchement justifié par le chantier.',
+        $this->bureau,
+    );
+
+    expect($this->validation->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau)->status)
+        ->toBe(TimesheetStatus::Validee);
+});
+
 it('requires a new review after a correction cycle even when segments are unchanged', function (): void {
     $timesheet = pc132ReviewableTimesheet(
         $this->owner,

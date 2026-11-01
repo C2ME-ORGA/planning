@@ -258,3 +258,132 @@ it('refuses every control action by an inactive account', function (): void {
             AuditAction::TimesheetCorrectionResumed->value,
         ])->count())->toBe(0);
 });
+
+it('lets the Bureau send a corrected draft directly to final validation with a reason', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment($timesheet);
+
+    $result = $this->service->sendToValidation(
+        $timesheet,
+        '  Correction effectuée par le Bureau.  ',
+        $this->bureau,
+    );
+
+    expect($result->status)->toBe(TimesheetStatus::PretePourValidation);
+
+    $event = AuditEvent::query()
+        ->where('action', AuditAction::TimesheetSentToValidation->value)
+        ->where('subject_id', (string) $timesheet->getKey())
+        ->firstOrFail();
+
+    expect($event->actor_id)->toBe($this->bureau->getKey())
+        ->and($event->reason)->toBe('Correction effectuée par le Bureau.')
+        ->and($event->changes['from'] ?? null)->toBe(TimesheetStatus::Brouillon->value)
+        ->and($event->changes['to'] ?? null)->toBe(TimesheetStatus::PretePourValidation->value)
+        ->and($event->changes['path'] ?? null)->toBe('bureau_correction');
+});
+
+it('refuses direct transmission by the owner, a chef or a conducteur', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment($timesheet);
+    $conducteur = TimesheetFixtures::user(Role::Conducteur);
+
+    foreach ([$this->ownerUser, $this->chefUser, $this->outOfPerimeterChef, $conducteur] as $actor) {
+        expect(fn (): Timesheet => $this->service->sendToValidation(
+            $timesheet,
+            'Correction effectuée par le Bureau.',
+            $actor,
+        ))->toThrow(AuthorizationException::class);
+    }
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('refuses an invalid direct transmission reason', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment($timesheet);
+
+    foreach (['', '   ', '123456789', str_repeat('a', 501)] as $reason) {
+        expect(fn (): Timesheet => $this->service->sendToValidation($timesheet, $reason, $this->bureau))
+            ->toThrow(ValidationException::class);
+    }
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('refuses an empty draft or an out-of-week segment for direct transmission', function (): void {
+    $empty = TimesheetFixtures::timesheet($this->owner);
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $empty,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    ))->toThrow(ValidationException::class);
+
+    $invalid = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09');
+    TimesheetFixtures::segment(
+        $invalid,
+        start: '2026-11-08 22:00:00',
+        end: '2026-11-09 02:00:00',
+    );
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $invalid,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    ))->toThrow(ValidationException::class);
+
+    expect($empty->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and($invalid->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('does not create a second direct transmission event on a repeated request', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment($timesheet);
+
+    $this->service->sendToValidation($timesheet, 'Correction effectuée par le Bureau.', $this->bureau);
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    ))->toThrow(AuthorizationException::class);
+
+    expect(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(1);
+});
+
+it('rolls back the direct transmission when the audit fails', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment($timesheet);
+
+    config(['planning.audit.key' => 'trop-court']);
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    ))->toThrow(RuntimeException::class, 'PLANNING_AUDIT_KEY');
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('refuses direct transmission by an inactive Bureau account', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment($timesheet);
+
+    $inactiveBureau = TimesheetFixtures::user(Role::BureauDirection);
+    $inactiveBureau->forceFill(['is_active' => false])->save();
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $timesheet,
+        'Correction effectuée par le Bureau.',
+        $inactiveBureau,
+    ))->toThrow(AuthorizationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});

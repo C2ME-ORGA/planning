@@ -7,10 +7,13 @@ use App\Enums\TimesheetStatus;
 use App\Models\Timesheet;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
+use App\Support\TimesheetMinutePrecision;
 use App\Support\TimesheetReason;
+use App\Support\TimesheetWeekBounds;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Contrôle d'un relevé : retour en correction, reprise et préparation à la
@@ -65,8 +68,38 @@ class TimesheetControlService
         );
     }
 
+    /**
+     * Transmission directe à la validation d'un brouillon corrigé par le
+     * Bureau/Direction.
+     *
+     * Le parcours remplace la transmission du salarié et le contrôle
+     * intermédiaire. Il reste réservé au Bureau/Direction, exige un motif et
+     * revalide les segments sous verrou avant toute écriture. L'acteur est
+     * ensuite exclu de la validation finale d'un relevé dont il n'est pas
+     * propriétaire.
+     */
+    public function sendToValidation(Timesheet $timesheet, string $reason, User $actor): Timesheet
+    {
+        return $this->transition(
+            timesheet: $timesheet,
+            actor: $actor,
+            target: TimesheetStatus::PretePourValidation,
+            ability: 'sendToValidation',
+            action: AuditAction::TimesheetSentToValidation,
+            reason: $reason,
+            guard: function (Timesheet $locked): void {
+                $this->assertSegmentsTransmittable($locked);
+            },
+            changes: ['path' => 'bureau_correction'],
+        );
+    }
+
     private const REASON_PROBE = 'motif de contrôle';
 
+    /**
+     * @param  (callable(Timesheet): void)|null  $guard
+     * @param  array<string, mixed>  $changes
+     */
     private function transition(
         Timesheet $timesheet,
         User $actor,
@@ -74,8 +107,10 @@ class TimesheetControlService
         string $ability,
         AuditAction $action,
         ?string $reason = null,
+        ?callable $guard = null,
+        array $changes = [],
     ): Timesheet {
-        return DB::transaction(function () use ($timesheet, $actor, $target, $ability, $action, $reason): Timesheet {
+        return DB::transaction(function () use ($timesheet, $actor, $target, $ability, $action, $reason, $guard, $changes): Timesheet {
             $locked = Timesheet::query()
                 ->whereKey($timesheet->getKey())
                 ->lockForUpdate()
@@ -87,6 +122,10 @@ class TimesheetControlService
 
             $reason = $this->authorizeReasonedAction($actor, $locked, $ability, $reason);
 
+            if ($guard !== null) {
+                $guard($locked);
+            }
+
             $from = $locked->status;
 
             $locked->forceFill(['status' => $target->value])->save();
@@ -94,13 +133,38 @@ class TimesheetControlService
             $this->audit->record(
                 $action,
                 $locked,
-                ['from' => $from->value, 'to' => $target->value],
+                ['from' => $from->value, 'to' => $target->value] + $changes,
                 $reason,
                 $actor,
             );
 
             return $locked;
         });
+    }
+
+    private function assertSegmentsTransmittable(Timesheet $timesheet): void
+    {
+        $segments = $timesheet->segments()->get();
+
+        if ($segments->isEmpty()) {
+            throw ValidationException::withMessages([
+                'timesheet' => 'Un relevé sans segment ne peut pas être transmis à la validation.',
+            ]);
+        }
+
+        foreach ($segments as $segment) {
+            $start = $segment->start_at;
+            $end = $segment->end_at;
+
+            if ($start === null || $end === null) {
+                throw ValidationException::withMessages([
+                    'timesheet' => 'Un segment du relevé est incomplet.',
+                ]);
+            }
+
+            TimesheetMinutePrecision::assert($start, $end, 'timesheet');
+            TimesheetWeekBounds::assertContains($timesheet, $start, $end, 'timesheet');
+        }
     }
 
     /**

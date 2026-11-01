@@ -22,15 +22,23 @@
 
 ## Décision de périmètre
 
-La matrice des états reste inchangée. Le passage direct
-`Brouillon → Prête pour validation` n'est pas ajouté : aucune spécification
-vérifiable ne le confirme et la documentation d'architecture l'exclut
-explicitement. Un brouillon corrigé par le Bureau/Direction est rendu au
-salarié propriétaire pour transmission ; le contrôle et la validation
-reprennent ensuite normalement.
+La matrice des états intègre désormais le passage direct
+`Brouillon → Prête pour validation`, réservé au Bureau/Direction et motivé.
+Après correction d'un brouillon, le Bureau/Direction peut le transmettre
+directement à la validation finale sans le rendre au salarié pour une nouvelle
+transmission. L'événement `timesheet.sent_to_validation` est dédié, attribué et
+intégré à la complétude du cycle courant.
 
-Le motif obligatoire d'une journée attendue sans heure reste différé au Lot 7
-et n'est pas bloquant pour PC1-31.
+L'indépendance du validateur reste garantie : l'auteur de la transmission
+directe est traité comme contrôleur et ne peut pas valider un relevé dont il
+n'est pas propriétaire. Le propriétaire Bureau/Direction conserve
+l'auto-validation motivée définie en PC1-32. Les chefs d'équipe et les
+conducteurs de travaux ne disposent ni de la transmission directe ni de
+l'auto-validation.
+
+Le parcours normal du salarié (`Brouillon → À contrôler → Prête → Validée`)
+reste inchangé. Le motif obligatoire d'une journée attendue sans heure reste
+différé au Lot 7 et n'est pas bloquant pour PC1-31.
 
 ## Matrice exigences / implémentation / preuves
 
@@ -49,8 +57,12 @@ et n'est pas bloquant pour PC1-31.
 | Avertissement > 12 h non bloquant | Conforme | calcul 720/721 min + affichage semaine/détail |
 | Chevauchements détectés, transmission non bloquée | Conforme | `TimesheetOverlapDetector`, audit de soumission |
 | Revue obligatoire avant validation | Conforme | `TimesheetOverlapReviewService`, tests |
+| Revue des chevauchements préservée sur le parcours direct | Conforme | revue obligatoire après transmission directe |
 | Motifs obligatoires normalisés (10–500) | Conforme | `TimesheetReason`, tests |
 | Séparation des tâches | Conforme | `TimesheetPolicy`, `TimesheetActorHistory` |
+| Transmission directe d'un brouillon corrigé par le Bureau | Conforme | `TimesheetControlService::sendToValidation`, transition dédiée |
+| Indépendance du validateur après transmission directe | Conforme | `TimesheetActorHistory` traite l'auteur comme contrôleur |
+| Chefs et conducteurs exclus de la transmission directe | Conforme | policy `sendToValidation`, tests de refus |
 | Auto-validation Bureau/Direction motivée | Conforme | policy + service + événement dédié |
 | Réouverture motivée d'un relevé validé | Conforme | `TimesheetValidationService::reopen`, tests |
 | Nouveau cycle et conservation de l'historique | Conforme | frontière de cycle + test multi-cycles |
@@ -70,17 +82,24 @@ et n'est pas bloquant pour PC1-31.
    projette les avertissements de `WorkedTimeCalculator` et un composant Blade
    les affiche dans la semaine et dans la fiche détail. L'avertissement est non
    bloquant et ne modifie aucun segment.
-3. **Tests de non-régression** — modification directe hors brouillon,
+3. **Transmission directe Bureau/Direction** — nouvelle transition
+   `Brouillon → Prête pour validation`, réservée au rôle Bureau/Direction,
+   motivée, revalidant les segments sous verrou et auditée par
+   `timesheet.sent_to_validation`. L'action Livewire est exposée dans la fiche
+   détail ; l'auteur est exclu de la validation finale d'un relevé dont il n'est
+   pas propriétaire.
+4. **Tests de non-régression** — modification directe hors brouillon,
    affichage de l'avertissement de durée, conservation et ordre de l'historique
    après deux cycles, rollback d'une revue de chevauchement en cas d'échec
-   d'audit.
+   d'audit, transmission directe autorisée/interdite, indépendance du validateur
+   et auto-validation motivée après transmission directe.
 
 ## Résultats des contrôles
 
 | Contrôle | Résultat |
 |---|---|
-| Tests ciblés Lot 5 | 283 tests, 1 101 assertions, 0 échec |
-| Suite complète | 568 tests, 567 réussis, 1 ignoré, 3 063 assertions |
+| Tests ciblés Lot 5 | 304 tests, 1 180 assertions, 0 échec |
+| Suite complète | 589 tests, 588 réussis, 1 ignoré, 3 142 assertions |
 | Laravel Pint `--test` | Vert |
 | PHPStan / Larastan | 0 erreur |
 | `git diff --check` | Propre |
@@ -116,15 +135,20 @@ Réserve : le motif de journée sans saisie reste au Lot 7.
 ### PC1-33 — Corrections et réouverture
 
 Statut proposé : **prêt pour recette / validation humaine**, sous réserve de
-confirmer la numérotation Jira et le parcours de correction directe du
-Bureau/Direction.
+confirmer la numérotation Jira. Le parcours de correction directe du
+Bureau/Direction est implémenté et testé.
 
 Critères de clôture proposés :
 
 - retour en correction motivé et normalisé ;
 - reprise par le salarié et nouvelle transmission ;
 - correction historisée avec acteur, rôle et valeurs avant/après ;
+- transmission directe d'un brouillon corrigé par le Bureau/Direction, avec
+  motif obligatoire et événement `timesheet.sent_to_validation` dédié ;
+- indépendance du validateur : l'auteur de la transmission directe ne peut pas
+  valider un relevé dont il n'est pas propriétaire ;
 - préparation à la validation puis validation finale ;
+- auto-validation Bureau/Direction motivée conservée, avec événement dédié ;
 - réouverture motivée réservée à un acteur habilité ;
 - nouveau cycle complet et historique des cycles précédents conservé ;
 - revues de chevauchement obsolètes invalidées ;
@@ -132,12 +156,15 @@ Critères de clôture proposés :
 - transitions interdites refusées côté serveur.
 
 Preuves : `TimesheetControlServiceTest`,
-`TimesheetValidationServiceTest`, `TimesheetOverlapReviewTest`,
-`TimesheetPolicyTest`, `WorkspaceBureauTest`, `WorkspaceTeamTest`.
+`TimesheetValidationServiceTest`, `TimesheetActorHistoryTest`,
+`TimesheetOverlapReviewTest`, `TimesheetPolicyTest`, `WorkspaceBureauTest`,
+`WorkspaceTeamTest`, `WorkspaceEmployeeTest`.
 
-Réserve : le parcours `Brouillon → Prête pour validation` pour le
-Bureau/Direction n'est pas implémenté ; il nécessite une décision métier
-explicite et une adaptation de la complétude du cycle.
+Réserve d'ergonomie : la fiche détail expose l'action de transmission directe
+mais pas un formulaire de saisie des segments pour le brouillon d'un autre
+salarié. La correction de ce brouillon est couverte côté service et policy
+(`TimesheetSegmentServiceTest`). À confirmer si Jira exige un écran Bureau
+dédié avant clôture.
 
 ## Risques restants
 
@@ -149,3 +176,6 @@ explicite et une adaptation de la complétude du cycle.
   arbitrage métier ouvert.
 - La contradiction de numérotation PC1-33 doit être corrigée dans Jira avant
   clôture.
+- L'écran de saisie des segments d'un brouillon appartenant à un autre salarié
+  n'est pas ajouté ; la correction est possible via le service/policy et la
+  transmission directe via la fiche détail.

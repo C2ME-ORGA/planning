@@ -211,3 +211,40 @@ it('does not treat a correction resume as a preparation action', function (): vo
 
     expect($this->history->isPreparedBy($this->bureau, $this->timesheet))->toBeFalse();
 });
+
+it('treats a direct Bureau transmission as a control action', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSentToValidation, $this->bureau, 'Correction effectuée par le Bureau.');
+
+    expect($this->history->isPreparedBy($this->bureau, $this->timesheet))->toBeFalse()
+        ->and($this->history->hasControlled($this->bureau, $this->timesheet))->toBeTrue();
+});
+
+it('accepts a direct Bureau transmission as a complete trail', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSentToValidation, $this->bureau, 'Correction effectuée par le Bureau.');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeTrue();
+});
+
+it('requires the direct transmission after the latest cycle boundary', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSentToValidation, $this->bureau, 'Correction effectuée par le Bureau.');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeTrue();
+
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReopened, $this->bureau, 'Réouverture demandée');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetSentToValidation, $this->bureau, 'Nouvelle correction après réouverture.');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeTrue();
+});
+
+it('does not accept an unattributed direct transmission', function (): void {
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::auditWithoutActor($this->timesheet, AuditAction::TimesheetSentToValidation, 'Correction effectuée par le Bureau.');
+
+    expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+});

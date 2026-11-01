@@ -154,6 +154,20 @@
                         </form>
                     @endif
 
+                    @if ($canSendToValidation)
+                        <form wire:submit.prevent="sendToValidation" class="space-y-2 border-t border-stone-100 pt-4">
+                            <label for="direct-reason" class="block text-sm font-medium text-stone-700">Transmettre directement à la validation</label>
+                            <p class="text-xs text-stone-500">
+                                Correction Bureau/Direction : le relevé passe en « Prête pour validation » sans transmission préalable du salarié. Le validateur final doit rester indépendant.
+                            </p>
+                            <textarea id="direct-reason" wire:model="directReason" rows="3" class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm focus:border-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-200" placeholder="Motif obligatoire (10 caractères minimum)"></textarea>
+                            @error('directReason') <p class="text-sm text-rose-700" role="alert">{{ $message }}</p> @enderror
+                            <button type="submit" wire:confirm="Transmettre ce relevé corrigé à la validation finale ?" class="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-violet-700 px-4 text-sm font-semibold text-white hover:bg-violet-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-600 focus-visible:ring-offset-2">
+                                Transmettre à la validation
+                            </button>
+                        </form>
+                    @endif
+
                     @if ($canValidate)
                         <form wire:submit.prevent="validateTimesheet" class="space-y-2 border-t border-stone-100 pt-4">
                             <p class="text-sm font-medium text-stone-700">Validation finale</p>
@@ -183,7 +197,7 @@
                         </form>
                     @endif
 
-                    @if (! $canSubmit && ! $canResume && ! $canReturn && ! $canMarkReady && ! $canValidate && ! $canReopen)
+                    @if (! $canSubmit && ! $canResume && ! $canReturn && ! $canMarkReady && ! $canSendToValidation && ! $canValidate && ! $canReopen)
                         <p class="text-sm text-stone-500">Aucune action disponible pour votre rôle sur ce statut.</p>
                     @endif
                 </div>

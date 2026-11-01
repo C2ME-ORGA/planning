@@ -49,6 +49,7 @@ final class TimesheetActorHistory
         return [
             AuditAction::TimesheetReturnedForCorrection->value,
             AuditAction::TimesheetReadyForValidation->value,
+            AuditAction::TimesheetSentToValidation->value,
         ];
     }
 
@@ -92,10 +93,6 @@ final class TimesheetActorHistory
             $boundarySequence,
         );
 
-        if ($submittedSequence === null) {
-            return false;
-        }
-
         if ($timesheet->status === TimesheetStatus::PretePourValidation) {
             $readySequence = $this->latestAttributedSequence(
                 $timesheet,
@@ -103,12 +100,24 @@ final class TimesheetActorHistory
                 $boundarySequence,
             );
 
-            if ($readySequence === null || $readySequence <= $submittedSequence) {
-                return false;
-            }
+            $normalPath = $submittedSequence !== null
+                && $readySequence !== null
+                && $readySequence > $submittedSequence;
+
+            // Le Bureau/Direction peut transmettre directement un brouillon
+            // corrigé à la validation finale, sans transmission préalable du
+            // salarié. Cet événement, attribué et postérieur à la frontière du
+            // cycle, remplace la paire submitted/ready.
+            $directSequence = $this->latestAttributedSequence(
+                $timesheet,
+                AuditAction::TimesheetSentToValidation->value,
+                $boundarySequence,
+            );
+
+            return $normalPath || $directSequence !== null;
         }
 
-        return true;
+        return $submittedSequence !== null;
     }
 
     /**

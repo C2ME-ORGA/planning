@@ -533,6 +533,33 @@ et PHPStan sont verts.
   état courant ni événement de décision.
 - `tests/Unit/WorkedTimeCalculatorTest.php` (existant, vérifié) : 720 minutes
   ne produisent aucun avertissement, 721 minutes en produisent un.
+- `tests/Unit/TimesheetStatusTest.php` (étendu) : sept transitions de référence,
+  dont `Brouillon → Prête pour validation` avec motif obligatoire.
+- `tests/Feature/Timesheets/TimesheetPolicyTest.php` (étendu) : transmission
+  directe réservée au Bureau/Direction disposant de `timesheet.validate`, motif
+  obligatoire, refus des salariés, chefs, conducteurs, comptes inactifs et
+  statuts autres que brouillon.
+- `tests/Feature/Timesheets/TimesheetControlServiceTest.php` (étendu) :
+  transmission directe d'un brouillon corrigé, motif normalisé, audit
+  `timesheet.sent_to_validation` avec acteur et `path = bureau_correction`,
+  refus des rôles non habilités, motif invalide, relevé vide, segment hors
+  semaine, requête répétée, compte inactif et rollback si l'audit échoue.
+- `tests/Feature/Timesheets/TimesheetActorHistoryTest.php` (étendu) : la
+  transmission directe est une action de contrôle, complète le cycle courant,
+  doit être postérieure à la dernière frontière et doit être attribuée.
+- `tests/Feature/Timesheets/TimesheetValidationServiceTest.php` (étendu) :
+  validation par un second Bureau, refus du Bureau auteur de la transmission
+  directe, auto-validation motivée du propriétaire Bureau, nouveau cycle après
+  réouverture et parcours complet reprise de correction → correction → envoi
+  direct → validation indépendante.
+- `tests/Feature/Timesheets/TimesheetOverlapReviewTest.php` (étendu) : une
+  transmission directe par le Bureau ne contourne pas la revue des
+  chevauchements ; la validation reste bloquée jusqu'à une décision acceptée.
+- `tests/Feature/Timesheets/WorkspaceBureauTest.php` (étendu) : action Livewire
+  de transmission directe avec motif obligatoire.
+- `tests/Feature/Timesheets/WorkspaceTeamTest.php` et
+  `tests/Feature/Timesheets/WorkspaceEmployeeTest.php` (étendus) : action
+  absente de l'interface et refusée par appel direct pour un chef ou un salarié.
 
 Commande ciblée :
 
@@ -540,6 +567,6 @@ Commande ciblée :
 php artisan test tests/Feature/Timesheets tests/Unit/LocalDateTimeResolverTest.php tests/Unit/WorkedTimeCalculatorTest.php tests/Unit/TimesheetEnumsTest.php tests/Unit/TimesheetStatusTest.php
 ```
 
-Résultats observés localement : 283 tests ciblés réussis (1 101 assertions),
-puis suite complète à 568 tests dont 567 réussis et 1 ignoré (3 063
+Résultats observés localement : 304 tests ciblés réussis (1 180 assertions),
+puis suite complète à 589 tests dont 588 réussis et 1 ignoré (3 142
 assertions). Pint `--test` est vert et PHPStan ne remonte aucune erreur.

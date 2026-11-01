@@ -251,6 +251,23 @@ it('submits, displays a correction and resumes the cycle before resubmitting', f
             ->count())->toBe(2);
 });
 
+it('does not allow an employee to send a draft directly to validation', function (): void {
+    [$ownerUser, $owner] = workspaceEmployeeContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    TimesheetFixtures::segment($timesheet);
+
+    $this->actingAs($ownerUser);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertDontSee('Transmettre directement à la validation')
+        ->set('directReason', 'Tentative de transmission directe.')
+        ->call('sendToValidation')
+        ->assertForbidden();
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
 it('navigates between weeks through full-page Livewire redirects', function (): void {
     [$ownerUser] = workspaceEmployeeContext();
 
