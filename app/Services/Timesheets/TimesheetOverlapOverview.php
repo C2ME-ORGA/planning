@@ -125,24 +125,32 @@ final class TimesheetOverlapOverview
 
     /**
      * Relevés dont le statut autorise une revue et qui possèdent au moins une
-     * paire de segments en chevauchement.
-     *
-     * La requête SQL préfiltre les seuls relevés comportant une paire
-     * réellement en chevauchement selon la même règle temporelle que
-     * `TimesheetOverlapDetector`. Le contrôle final de l'état de la revue
-     * (cycle et empreinte SHA-256) reste en PHP : l'empreinte est calculée à
-     * partir des données PHP et ne doit pas être dupliquée en SQL.
+     * paire non examinée ou dont la revue est obsolète.
      *
      * @return Collection<int, Timesheet>
      */
     public function timesheetsWithPendingOverlaps(): Collection
+    {
+        return $this->pendingOverlapSummary()['timesheets'];
+    }
+
+    /**
+     * Relevés avec au moins une revue à effectuer, et total de ces paires.
+     *
+     * Le préfiltrage SQL isole les relevés ayant réellement un chevauchement.
+     * Les segments, revues et cycles sont ensuite chargés en lot : le coût en
+     * requêtes ne dépend pas du nombre de relevés candidats.
+     *
+     * @return array{timesheets: Collection<int, Timesheet>, pending_pairs: int}
+     */
+    public function pendingOverlapSummary(): array
     {
         $statuses = array_values(array_filter(
             TimesheetStatus::cases(),
             static fn (TimesheetStatus $status): bool => $status->allowsOverlapReview(),
         ));
 
-        return Timesheet::query()
+        $candidates = Timesheet::query()
             ->whereIn('status', array_map(
                 static fn (TimesheetStatus $status): string => $status->value,
                 $statuses,
@@ -167,9 +175,69 @@ final class TimesheetOverlapOverview
                     });
             })
             ->orderByDesc('period_start')
+            ->get();
+
+        if ($candidates->isEmpty()) {
+            return [
+                'timesheets' => $candidates,
+                'pending_pairs' => 0,
+            ];
+        }
+
+        $ids = $candidates
+            ->pluck('id')
+            ->map(static fn (mixed $id): int => (int) $id)
+            ->all();
+
+        $overlaps = $this->reviews->overlapsForTimesheets($candidates->all());
+
+        /** @var Collection<int, Collection<int, TimesheetOverlapReview>> $reviews */
+        $reviews = TimesheetOverlapReview::query()
+            ->whereIn('timesheet_id', $ids)
             ->get()
-            ->filter(fn (Timesheet $timesheet): bool => $this->pendingPairCount($timesheet) > 0)
-            ->values();
+            ->groupBy(static fn (TimesheetOverlapReview $review): int => (int) $review->timesheet_id);
+
+        $cycles = $this->history->currentCycleSequences($ids);
+        $pendingCounts = [];
+
+        foreach ($candidates as $timesheet) {
+            $pairs = $overlaps[(int) $timesheet->getKey()] ?? [];
+
+            if ($pairs === []) {
+                continue;
+            }
+
+            $byPairKey = $reviews
+                ->get((int) $timesheet->getKey(), collect())
+                ->keyBy(static fn (TimesheetOverlapReview $review): string => $review->pair_key);
+
+            $cycle = $cycles[(int) $timesheet->getKey()] ?? 0;
+            $count = 0;
+
+            foreach ($pairs as $pair) {
+                $review = $byPairKey->get($pair['pair_key']);
+
+                if (! $review instanceof TimesheetOverlapReview
+                    || $review->cycle_sequence !== $cycle
+                    || $review->fingerprint !== $pair['fingerprint']) {
+                    $count++;
+                }
+            }
+
+            if ($count > 0) {
+                $pendingCounts[(int) $timesheet->getKey()] = $count;
+            }
+        }
+
+        return [
+            'timesheets' => $candidates
+                ->filter(static fn (Timesheet $timesheet): bool => array_key_exists(
+                    (int) $timesheet->getKey(),
+                    $pendingCounts,
+                ))
+                ->values(),
+            'pending_pairs' => array_sum($pendingCounts),
+        ];
     }
 
     /**

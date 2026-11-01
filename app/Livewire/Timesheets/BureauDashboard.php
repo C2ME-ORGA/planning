@@ -32,10 +32,9 @@ class BureauDashboard extends Component
         $counts = $this->countsByStatus();
 
         $overview = app(TimesheetOverlapOverview::class);
-        $pendingOverlaps = $overview->timesheetsWithPendingOverlaps();
-        $overlapPairs = $pendingOverlaps->sum(
-            fn (Timesheet $timesheet): int => $overview->pendingPairCount($timesheet),
-        );
+        $overlapSummary = $overview->pendingOverlapSummary();
+        $pendingOverlaps = $overlapSummary['timesheets'];
+        $overlapPairs = $overlapSummary['pending_pairs'];
 
         $history = app(TimesheetHistory::class);
         $recentEvents = $history->presentMany(

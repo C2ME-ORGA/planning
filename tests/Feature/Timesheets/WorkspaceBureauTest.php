@@ -19,6 +19,7 @@ use App\Services\Timesheets\TimesheetOverlapOverview;
 use App\Services\Timesheets\TimesheetOverlapReviewService;
 use App\Services\Timesheets\TimesheetSubmissionService;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Livewire\Livewire;
 use Tests\Support\TimesheetFixtures;
 
@@ -503,6 +504,42 @@ it('returns only timesheets with a pending or stale overlap review', function ()
         ->and($ids)->toContain((int) $stale->getKey())
         ->and($ids)->not->toContain((int) $reviewed->getKey())
         ->and($ids)->not->toContain((int) $withoutOverlap->getKey());
+});
+
+it('loads pending overlap candidates in a constant number of queries', function (): void {
+    [$bureau, , $ownerUser, , , $owner] = workspaceBureauContext();
+
+    [$first] = workspaceBureauOverlap(
+        workspaceBureauUnderControl($owner, $ownerUser, '2026-10-05'),
+        '2026-10-05',
+    );
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $one = app(TimesheetOverlapOverview::class)->timesheetsWithPendingOverlaps();
+    $oneQueryCount = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    workspaceBureauOverlap(
+        workspaceBureauUnderControl($owner, $ownerUser, '2026-10-12'),
+        '2026-10-12',
+    );
+    workspaceBureauOverlap(
+        workspaceBureauUnderControl($owner, $ownerUser, '2026-10-19'),
+        '2026-10-19',
+    );
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $many = app(TimesheetOverlapOverview::class)->timesheetsWithPendingOverlaps();
+    $manyQueryCount = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    expect($one)->toHaveCount(1)
+        ->and($one->first()?->getKey())->toBe($first->getKey())
+        ->and($many)->toHaveCount(3)
+        ->and($oneQueryCount)->toBe($manyQueryCount)
+        ->and($manyQueryCount)->toBe(6);
 });
 
 it('keeps the Bureau perimeter bypass impossible for every queue through Livewire state', function (string $queue): void {

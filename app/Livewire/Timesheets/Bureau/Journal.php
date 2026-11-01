@@ -54,7 +54,7 @@ class Journal extends Component
 
     public function booted(): void
     {
-        Gate::authorize('validateBatch', Timesheet::class);
+        Gate::authorize('viewJournal', Timesheet::class);
     }
 
     public function updatedDateFrom(): void

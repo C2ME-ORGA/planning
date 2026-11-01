@@ -191,6 +191,16 @@ class TimesheetPolicy
             && $actor->hasPermission(Permission::TimesheetValidate);
     }
 
+    /**
+     * Consultation du journal global des relevés, réservée au
+     * Bureau/Direction disposant de la capacité de validation.
+     */
+    public function viewJournal(User $actor): bool
+    {
+        return $actor->role === Role::BureauDirection
+            && $actor->hasPermission(Permission::TimesheetValidate);
+    }
+
     public function reopen(User $actor, Timesheet $timesheet, ?string $reason = null): bool
     {
         if (! $this->transitionAllowed($timesheet, TimesheetStatus::Brouillon, $reason)) {

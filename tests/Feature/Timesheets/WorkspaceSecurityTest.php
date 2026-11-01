@@ -1,10 +1,12 @@
 <?php
 
+use App\Enums\Permission;
 use App\Enums\Role;
 use App\Livewire\Timesheets\Bureau\BatchValidation;
 use App\Livewire\Timesheets\Bureau\Journal;
 use App\Livewire\Timesheets\TeamDashboard;
 use App\Livewire\Timesheets\TimesheetList;
+use App\Models\PermissionException;
 use App\Models\User;
 use Livewire\Livewire;
 
@@ -66,6 +68,25 @@ it('refuses the Bureau batch and journal Livewire components to a team leader', 
         ->set('queue', 'chevauchements')
         ->call('$refresh')
         ->assertForbidden();
+});
+
+it('refuses the journal to a non-Bureau account even with the validation permission', function (): void {
+    $chef = User::factory()->chefEquipe()->create();
+
+    PermissionException::query()->create([
+        'user_id' => $chef->getKey(),
+        'permission' => Permission::TimesheetValidate,
+        'reason' => 'Dérogation historique de test.',
+        'granted_at' => now()->subDay(),
+        'expires_at' => now()->addDay(),
+    ]);
+    $chef->refresh();
+
+    expect($chef->hasPermission(Permission::TimesheetValidate))->toBeTrue();
+
+    $this->actingAs($chef);
+
+    Livewire::test(Journal::class)->assertForbidden();
 });
 
 it('refuses the controller queues to an employee even after a Livewire property change', function (): void {

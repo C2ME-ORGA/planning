@@ -182,6 +182,40 @@ final class TimesheetActorHistory
     }
 
     /**
+     * Séquences de cycle courantes pour plusieurs relevés, en une requête.
+     *
+     * @param  array<int, int>  $timesheetIds
+     * @return array<int, int>
+     */
+    public function currentCycleSequences(array $timesheetIds): array
+    {
+        $ids = array_values(array_unique(array_map(
+            static fn (mixed $id): int => (int) $id,
+            $timesheetIds,
+        )));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $sequences = AuditEvent::query()
+            ->where('subject_type', Timesheet::class)
+            ->whereIn('subject_id', array_map(static fn (int $id): string => (string) $id, $ids))
+            ->whereIn('action', $this->cycleBoundaryActions())
+            ->selectRaw('subject_id, MAX(sequence) as aggregate')
+            ->groupBy('subject_id')
+            ->pluck('aggregate', 'subject_id');
+
+        $result = array_fill_keys($ids, 0);
+
+        foreach ($sequences as $subjectId => $sequence) {
+            $result[(int) $subjectId] = (int) $sequence;
+        }
+
+        return $result;
+    }
+
+    /**
      * Toute frontière de cycle doit être attribuée, pas seulement la dernière :
      * une réouverture ou une reprise non traçable laisse un trou dans
      * l'historique et interdit la validation des cycles suivants.
