@@ -15,7 +15,7 @@ use Throwable;
 class PartialSessionRevocationException extends RuntimeException
 {
     public function __construct(
-        public readonly bool $sessionsDeleted,
+        public readonly int $deletedSessions,
         public readonly bool $rememberTokensRotated,
         public readonly bool $auditRecorded,
         ?Throwable $previous = null,

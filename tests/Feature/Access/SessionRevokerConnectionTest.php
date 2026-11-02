@@ -308,11 +308,87 @@ it('reports a partial revocation when audit fails after dedicated session deleti
         $output = Artisan::output();
 
         expect($output)->toContain('Révocation partielle')
-            ->and($output)->toContain('remember tokens');
+            ->and($output)->toContain('1 session(s) supprimée(s)')
+            ->and($output)->toContain('remember tokens ont été renouvelés')
+            ->and($output)->toContain('audit n’a pas été enregistré');
 
         expect(DB::connection('sessions')->table('sessions')->where('user_id', $user->id)->count())->toBe(0)
             ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-            ->and($user->fresh()->remember_token)->toBe($initialToken);
+            ->and($user->fresh()->remember_token)->not->toBe($initialToken);
+
+        $this->assertDatabaseMissing('audit_events', [
+            'action' => AuditAction::EmergencyLockdown->value,
+        ]);
+    } finally {
+        dropDedicatedSessionDatabase($database);
+    }
+});
+
+it('does not claim deleted sessions when audit fails with zero dedicated sessions', function () {
+    $database = createDedicatedSessionDatabase();
+
+    try {
+        createDedicatedSessionsTable();
+        config(['session.connection' => 'sessions', 'session.table' => 'sessions']);
+
+        $user = User::factory()->bureauDirection()->create();
+        $initialToken = $user->remember_token;
+        insertSessionOn('mysql', $user, 'default-audit-zero');
+
+        $audit = Mockery::mock(AuditLogger::class);
+        $audit->shouldReceive('assertConfigured')->once();
+        $audit->shouldReceive('record')->once()->andThrow(new RuntimeException('Échec d’audit simulé.'));
+        app()->instance(AuditLogger::class, $audit);
+
+        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+        $output = Artisan::output();
+
+        expect($output)->toContain('Révocation incomplète')
+            ->and($output)->toContain('aucune session n’a été supprimée')
+            ->and($output)->toContain('remember tokens ont été renouvelés')
+            ->and($output)->toContain('audit n’a pas été enregistré');
+
+        expect(DB::connection('sessions')->table('sessions')->count())->toBe(0)
+            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
+            ->and($user->fresh()->remember_token)->not->toBe($initialToken);
+
+        $this->assertDatabaseMissing('audit_events', [
+            'action' => AuditAction::EmergencyLockdown->value,
+        ]);
+    } finally {
+        dropDedicatedSessionDatabase($database);
+    }
+});
+
+it('reports the exact count when audit fails after several dedicated sessions are deleted', function () {
+    $database = createDedicatedSessionDatabase();
+
+    try {
+        createDedicatedSessionsTable();
+        config(['session.connection' => 'sessions', 'session.table' => 'sessions']);
+
+        $user = User::factory()->bureauDirection()->create();
+        $initialToken = $user->remember_token;
+        insertSessionOn('mysql', $user, 'default-audit-multiple');
+        insertSessionOn('sessions', $user, 'dedicated-audit-multiple-1');
+        insertSessionOn('sessions', $user, 'dedicated-audit-multiple-2');
+
+        $audit = Mockery::mock(AuditLogger::class);
+        $audit->shouldReceive('assertConfigured')->once();
+        $audit->shouldReceive('record')->once()->andThrow(new RuntimeException('Échec d’audit simulé.'));
+        app()->instance(AuditLogger::class, $audit);
+
+        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+        $output = Artisan::output();
+
+        expect($output)->toContain('Révocation partielle')
+            ->and($output)->toContain('2 session(s) supprimée(s)')
+            ->and($output)->toContain('remember tokens ont été renouvelés')
+            ->and($output)->toContain('audit n’a pas été enregistré');
+
+        expect(DB::connection('sessions')->table('sessions')->count())->toBe(0)
+            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
+            ->and($user->fresh()->remember_token)->not->toBe($initialToken);
 
         $this->assertDatabaseMissing('audit_events', [
             'action' => AuditAction::EmergencyLockdown->value,
@@ -344,7 +420,8 @@ it('reports a partial revocation when remember token rotation fails after dedica
         $output = Artisan::output();
 
         expect($output)->toContain('Révocation partielle')
-            ->and($output)->toContain('remember tokens');
+            ->and($output)->toContain('1 session(s) supprimée(s)')
+            ->and($output)->toContain('remember tokens a échoué');
 
         expect(DB::connection('sessions')->table('sessions')->where('user_id', $user->id)->count())->toBe(0)
             ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)

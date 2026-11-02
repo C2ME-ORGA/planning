@@ -220,11 +220,15 @@ Messages de retour :
   mutation, notamment pilote, connexion, table ou colonnes invalides.
 - `Révocation annulée : aucune session n’a été supprimée` : échec avec rollback
   sur la connexion par défaut.
-- `Révocation partielle` : des sessions ont été supprimées sur une connexion
-  distincte, mais une étape ultérieure a échoué. Une vérification opérationnelle
-  est obligatoire.
+- `Révocation partielle : N session(s) supprimée(s)` : des sessions ont été
+  supprimées sur une connexion distincte, les remember tokens ont été renouvelés,
+  mais l’audit n’a pas été enregistré, ou le renouvellement des tokens a échoué.
+  Une vérification opérationnelle est obligatoire.
+- `Révocation incomplète : aucune session n’a été supprimée` : aucune session
+  n’existait sur la connexion dédiée ; les remember tokens ont été renouvelés,
+  mais l’audit n’a pas été enregistré. Une vérification reste nécessaire.
 
-Procédure de diagnostic après une `Révocation partielle` :
+Procédure de diagnostic après une `Révocation partielle` ou `incomplète` :
 
 1. Identifier la connexion utilisée (`SESSION_CONNECTION` ou connexion par
    défaut).

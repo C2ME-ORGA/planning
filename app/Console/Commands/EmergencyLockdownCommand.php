@@ -39,16 +39,17 @@ class EmergencyLockdownCommand extends Command
         }
 
         $distinctConnection = $sessions->usesDistinctConnection();
-        $sessionsRevoked = false;
+        $sessionsDeleted = 0;
+        $rememberTokensRotated = false;
 
         try {
-            // La transaction couvre la révocation en base et l’audit sur la
-            // connexion principale. Avec une connexion de sessions distincte,
-            // la suppression des sessions est déjà validée par sa propre
-            // transaction avant l’audit.
-            $revoked = DB::transaction(function () use ($sessions, $audit, &$sessionsRevoked): int {
+            if ($distinctConnection) {
+                // Connexion de sessions distincte : ne pas englober l’audit
+                // dans la transaction de la connexion par défaut, sinon un
+                // échec d’audit annulerait les remember tokens déjà renouvelés.
                 $revoked = $sessions->revokeAll();
-                $sessionsRevoked = true;
+                $sessionsDeleted = $revoked;
+                $rememberTokensRotated = true;
 
                 $audit->record(
                     AuditAction::EmergencyLockdown,
@@ -56,20 +57,40 @@ class EmergencyLockdownCommand extends Command
                     ['sessions_revoked' => $revoked],
                     'Révocation globale des sessions via la procédure d’urgence.',
                 );
+            } else {
+                // Connexion identique : la révocation et l’audit partagent la
+                // même transaction et sont annulés ensemble en cas d’échec.
+                $revoked = DB::transaction(function () use (
+                    $sessions,
+                    $audit,
+                    &$sessionsDeleted,
+                    &$rememberTokensRotated,
+                ): int {
+                    $revoked = $sessions->revokeAll();
+                    $sessionsDeleted = $revoked;
+                    $rememberTokensRotated = true;
 
-                return $revoked;
-            });
+                    $audit->record(
+                        AuditAction::EmergencyLockdown,
+                        null,
+                        ['sessions_revoked' => $revoked],
+                        'Révocation globale des sessions via la procédure d’urgence.',
+                    );
+
+                    return $revoked;
+                });
+            }
         } catch (PartialSessionRevocationException $exception) {
             $this->error($this->partialMessage($exception));
 
             return self::FAILURE;
         } catch (Throwable $exception) {
-            if ($sessionsRevoked && $distinctConnection) {
-                $this->error(
-                    'Révocation partielle : les sessions ont été supprimées, mais le renouvellement des '
-                    .'remember tokens et l’audit n’ont pas été validés. Une vérification opérationnelle est requise. '
-                    .$exception->getMessage()
-                );
+            if ($distinctConnection && $rememberTokensRotated) {
+                $message = $sessionsDeleted > 0
+                    ? "Révocation partielle : {$sessionsDeleted} session(s) supprimée(s) sur la connexion dédiée. Les remember tokens ont été renouvelés. L’audit n’a pas été enregistré. Une vérification opérationnelle est requise."
+                    : 'Révocation incomplète : aucune session n’a été supprimée. Les remember tokens ont été renouvelés. L’audit n’a pas été enregistré. Une vérification opérationnelle est requise.';
+
+                $this->error($message.' '.$exception->getMessage());
             } elseif ($distinctConnection) {
                 $this->error(
                     'Opération non exécutée : aucune session n’a été supprimée. '
@@ -94,9 +115,9 @@ class EmergencyLockdownCommand extends Command
     {
         $cause = $exception->getPrevious()?->getMessage();
 
-        $message = $exception->sessionsDeleted
-            ? 'Révocation partielle : les sessions ont été supprimées, mais le renouvellement des remember tokens a échoué. Aucun audit de réussite n’a été enregistré. Une vérification opérationnelle est requise.'
-            : 'Opération non exécutée : aucune session n’a été supprimée, mais une étape ultérieure a échoué.';
+        $message = $exception->deletedSessions > 0
+            ? "Révocation partielle : {$exception->deletedSessions} session(s) supprimée(s) sur la connexion dédiée, mais le renouvellement des remember tokens a échoué. Aucun audit de réussite n’a été enregistré. Une vérification opérationnelle est requise."
+            : 'Opération incomplète : aucune session n’a été supprimée, mais le renouvellement des remember tokens a échoué. Aucun audit de réussite n’a été enregistré. Une vérification opérationnelle est requise.';
 
         return $cause === null ? $message : $message.' '.$cause;
     }

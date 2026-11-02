@@ -96,11 +96,12 @@ testée en insérant directement un événement dont la signature est invalide.
 Résultats de référence du lot 2 avant la correction ciblée du retour Emergency
 Lockdown : 95 tests, 482 assertions, Pint et Larastan verts.
 
-La correction ciblée ajoute deux tests dans
+La correction ciblée ajoute des tests dans
 `tests/Feature/Access/SessionRevokerConnectionTest.php` : échec d’audit après
-suppression sur connexion dédiée et échec du renouvellement des remember tokens
-après suppression dédiée. Conformément à la consigne de validation
-proportionnée, la suite complète n’a pas été relancée pour ce changement
-circonscrit à `EmergencyLockdownCommand` et `SessionRevoker::revokeAll()` ; les
-tests ciblés de ce fichier et de `AccountLifecycleTest` couvrent les scénarios
-concernés.
+suppression d’une session dédiée, échec d’audit avec zéro session dédiée,
+échec d’audit après suppression de plusieurs sessions avec vérification du
+nombre exact, et échec du renouvellement des remember tokens après suppression
+dédiée. Conformément à la consigne de validation proportionnée, la suite
+complète n’a pas été relancée pour ce changement circonscrit à
+`EmergencyLockdownCommand` et `SessionRevoker::revokeAll()` ; les tests ciblés de
+ce fichier et de `AccountLifecycleTest` couvrent les scénarios concernés.

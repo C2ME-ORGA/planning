@@ -76,7 +76,7 @@ class SessionRevoker
             DB::transaction(fn () => $this->rotateAllRememberTokens());
         } catch (Throwable $exception) {
             throw new PartialSessionRevocationException(
-                sessionsDeleted: $deleted > 0,
+                deletedSessions: $deleted,
                 rememberTokensRotated: false,
                 auditRecorded: false,
                 previous: $exception,
