@@ -42,6 +42,9 @@ Les tests automatisés utilisent une base MySQL dédiée et jetable, `planning_c
 - `tests/Feature/Access/AccountLifecycleTest.php` : amorçage CLI, activation à
   usage unique et expirée, changement de rôle, désactivation, révocation de
   session, protection du dernier Bureau.
+- `tests/Feature/Access/SessionRevocationTest.php` : connexion et table de
+  session configurées, échec propagé sans audit mensonger, révocation globale,
+  rejet d'une session antérieure après réactivation, recalcul des permissions.
 - `tests/Feature/Audit/AuditLogTest.php` : chaîne, séquence, clé d’audit dédiée,
   rotation de clé, événements historiques `APP_KEY`, expurgation, détection
   d’une signature invalide et commande de vérification.

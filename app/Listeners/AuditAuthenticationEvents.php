@@ -26,6 +26,8 @@ class AuditAuthenticationEvents
 
         $event->user->forceFill(['last_login_at' => now()])->saveQuietly();
 
+        $this->recordSessionVersion($event->user);
+
         $this->audit->record(
             AuditAction::LoginSucceeded,
             $event->user,
@@ -34,6 +36,18 @@ class AuditAuthenticationEvents
             $event->user,
             ['guard' => $event->guard],
         );
+    }
+
+    /**
+     * Fige la version d'authentification dans la session au moment de la
+     * connexion. Toute révocation incrémente la version du compte : les
+     * sessions antérieures sont alors rejetées par EnsureAccountIsActive.
+     */
+    private function recordSessionVersion(User $user): void
+    {
+        if (app()->bound('request') && request()->hasSession()) {
+            request()->session()->put('auth.session_version', (int) $user->session_version);
+        }
     }
 
     public function handleFailed(Failed $event): void

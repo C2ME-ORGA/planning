@@ -159,6 +159,12 @@ Révoque toutes les sessions et jetons persistants. La commande **n'accorde
 aucun droit** et ne constitue pas un break-glass. Les utilisateurs doivent se
 réauthentifier, 2FA comprise.
 
+La suppression SQL cible `session.connection` / `session.table` lorsqu'ils sont
+définis. Avec un pilote de session autre que `database`, l'invalidation
+repose en plus sur le compteur `users.session_version`, contrôlé à chaque
+requête : une session antérieure à la révocation reste inutilisable, même
+après réactivation du compte.
+
 ## 7. Vérifications avant mise en service
 
 - `php artisan migrate --pretend` relu, puis migration contrôlée.

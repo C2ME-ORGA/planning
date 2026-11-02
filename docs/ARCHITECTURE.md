@@ -47,6 +47,13 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     d'activation à usage unique (`AccountActivation`, contrôleur dédié),
     désactivation avec révocation des sessions (`SessionRevoker`), réinitialisation
     de la 2FA en CLI. Aucune suppression physique.
+-   **Révocation** : `SessionRevoker` supprime les lignes sur la connexion et
+    la table configurées (`session.connection`, `session.table`) et renouvelle
+    `remember_token`. Pour les pilotes autres que `database`, cette suppression
+    n'est pas suffisante : `users.session_version` est incrémenté à chaque
+    révocation et `EnsureAccountIsActive` refuse toute session portant une
+    version antérieure. Une réactivation n'ouvre donc jamais l'accès à une
+    ancienne session, quel que soit le stockage.
 -   **Amorçage** : `planning:bootstrap-bureau` crée le premier Bureau/Direction,
     refuse si un tel compte existe déjà, puis se ferme. Aucune élévation de
     privilège par la CLI : chaque commande sensible exige `--actor` avec la
