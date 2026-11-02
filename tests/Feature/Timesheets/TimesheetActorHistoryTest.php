@@ -3,6 +3,7 @@
 use App\Enums\AuditAction;
 use App\Enums\Role;
 use App\Enums\TimesheetStatus;
+use App\Services\Audit\AuditLogger;
 use App\Services\Timesheets\TimesheetActorHistory;
 use Tests\Support\TimesheetFixtures;
 
@@ -247,4 +248,164 @@ it('does not accept an unattributed direct transmission', function (): void {
     TimesheetFixtures::auditWithoutActor($this->timesheet, AuditAction::TimesheetSentToValidation, 'Correction effectuée par le Bureau.');
 
     expect($this->history->hasCompleteTrail($this->timesheet))->toBeFalse();
+});
+
+it('recognizes an effective segment update by the actor in the current cycle', function (): void {
+    $segment = TimesheetFixtures::segment($this->timesheet);
+
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $this->timesheet,
+        [
+            'operation' => 'segment_updated',
+            'segment_id' => (int) $segment->getKey(),
+            'changed_fields' => ['end_at'],
+            'before' => ['end_at' => '2026-11-02T07:00:00Z'],
+            'after' => ['end_at' => '2026-11-02T08:00:00Z'],
+        ],
+        null,
+        $this->bureau,
+    );
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeTrue();
+});
+
+it('recognizes segment addition and deletion as corrections', function (): void {
+    $segment = TimesheetFixtures::segment($this->timesheet);
+
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $this->timesheet,
+        [
+            'operation' => 'segment_added',
+            'segment_id' => (int) $segment->getKey(),
+        ],
+        null,
+        $this->bureau,
+    );
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeTrue();
+
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $this->timesheet,
+        [
+            'operation' => 'segment_deleted',
+            'segment_id' => (int) $segment->getKey(),
+        ],
+        null,
+        $this->bureau,
+    );
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeTrue();
+});
+
+it('does not treat a no-op segment update as a correction', function (): void {
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $this->timesheet,
+        [
+            'operation' => 'segment_updated',
+            'segment_id' => 1,
+            'changed_fields' => [],
+            'before' => [],
+            'after' => [],
+        ],
+        null,
+        $this->bureau,
+    );
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeFalse();
+
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $this->timesheet,
+        [
+            'operation' => 'segment_updated',
+            'segment_id' => 1,
+            'changed_fields' => ['end_at'],
+            'before' => ['end_at' => '2026-11-02T08:00:00Z'],
+            'after' => ['end_at' => '2026-11-02T08:00:00Z'],
+        ],
+        null,
+        $this->bureau,
+    );
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeFalse();
+});
+
+it('does not accept a correction made by another actor or on another timesheet', function (): void {
+    $segment = TimesheetFixtures::segment($this->timesheet);
+
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $this->timesheet,
+        [
+            'operation' => 'segment_added',
+            'segment_id' => (int) $segment->getKey(),
+        ],
+        null,
+        $this->chef,
+    );
+
+    $other = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09');
+
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $other,
+        [
+            'operation' => 'segment_added',
+            'segment_id' => (int) $segment->getKey(),
+        ],
+        null,
+        $this->bureau,
+    );
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeFalse();
+});
+
+it('requires the correction after the latest cycle boundary', function (): void {
+    $segment = TimesheetFixtures::segment($this->timesheet);
+
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $this->timesheet,
+        [
+            'operation' => 'segment_added',
+            'segment_id' => (int) $segment->getKey(),
+        ],
+        null,
+        $this->bureau,
+    );
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeTrue();
+
+    TimesheetFixtures::audit($this->timesheet, AuditAction::TimesheetReopened, $this->bureau, 'Réouverture demandée');
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeFalse();
+
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $this->timesheet,
+        [
+            'operation' => 'segment_added',
+            'segment_id' => (int) $segment->getKey(),
+        ],
+        null,
+        $this->bureau,
+    );
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeTrue();
+});
+
+it('ignores timesheet updates that are not segment corrections', function (): void {
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $this->timesheet,
+        ['operation' => 'status_updated'],
+        null,
+        $this->bureau,
+    );
+
+    expect($this->history->hasCorrectedInCurrentCycle($this->bureau, $this->timesheet))->toBeFalse();
 });

@@ -498,8 +498,18 @@ it('still requires an overlap review before validating a direct Bureau transmiss
     TimesheetFixtures::audit($timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
     [$first, $second] = pc132AddOverlap($timesheet);
 
+    $this->segments->update(
+        $second,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => pc132OverlapInstant('2026-11-02 11:00:00'),
+            'end_at' => pc132OverlapInstant('2026-11-02 13:30:00'),
+        ],
+        $this->bureau,
+    );
+
     $this->controls->sendToValidation(
-        $timesheet,
+        $timesheet->fresh() ?? $timesheet,
         'Correction effectuée par le Bureau.',
         $this->bureau,
     );

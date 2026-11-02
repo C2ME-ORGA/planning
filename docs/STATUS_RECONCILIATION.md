@@ -30,14 +30,14 @@ Fusionnée dans `develop` le 01/11/2026. Merge commit `41bdd8f87d7577e7d2f2b6bfa
 | PC1-10 | À faire | Calculs/compteurs absents ; cohérent. |
 | PC1-11 | À faire | Matrice des rôles présente ; descriptif à actualiser et critères à confirmer. |
 | PC1-12 | À faire | Activation, cycle de compte et révocation présents ; descriptif à actualiser, recette à confirmer. |
-| PC1-13 | À faire | Description contradictoire sur l'auto-validation ; aligner sur les décisions confirmées et ApprovalRules. |
+| PC1-13 | À faire | Règles de validation et de correction confirmées : auto-validation Bureau/Direction motivée, séparation des tâches et transmission directe après correction effective implémentées ; recette à confirmer. |
 | PC1-14 | À faire | Procédures/commandes d'urgence documentées ; vérifier la recette et actualiser le descriptif. |
 | PC1-15 à PC1-22 | Terminé | Cohérent avec le périmètre RH livré. |
 | PC1-23 à PC1-27 | À faire | Lots 7 à 11 non livrés ; cohérent. |
 | PC1-28 à PC1-30 | Terminé | Cohérent avec clients/chantiers/planning présents. |
 | PC1-31 | En cours | Cohérent : saisie et workspace présents, critères résiduels/recette à vérifier ; motif sans saisie différé au Lot 7. |
 | PC1-32 | Terminé | Cohérent avec PR #15 fusionnée dans develop. |
-| PC1-33 | À faire | Parcours de correction/reprise présents en partie via PR #15 ; passer En cours pour vérifier les critères complets, notamment réouverture motivée et historique avant/après. |
+| PC1-33 | En cours | Parcours de correction/réouverture livrés : correction Bureau avec preuve d'une modification effective dans le cycle courant, interface de correction des segments, transmission directe motivée, indépendance du validateur et historique multi-cycles. Prêt pour recette. |
 | PC1-34 à PC1-49 | À faire | Fonctionnalités non livrées ; cohérent. |
 | PC1-50 | À faire | Audit documentaire largement réalisé ; En cours recommandé jusqu'à validation ADR/licence et validation humaine. |
 | PC1-51 | À faire | Socle/CI présents ; En cours recommandé pour réserves de configuration, alignement et promotion. |
@@ -70,7 +70,7 @@ Fusionnée dans `develop` le 01/11/2026. Merge commit `41bdd8f87d7577e7d2f2b6bfa
 - PC1-9 : En cours.
 - PC1-31 : En cours.
 - PC1-32 : Terminé.
-- PC1-33 : En cours.
+- PC1-33 : prêt pour recette (En cours jusqu'à validation humaine).
 - PC1-50, PC1-51 : En cours.
 - PC1-52 : À faire.
 

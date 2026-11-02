@@ -38,6 +38,7 @@ class TimesheetSegmentService
 {
     public function __construct(
         private readonly AuditLogger $audit,
+        private readonly TimesheetActorHistory $history,
     ) {}
 
     /**
@@ -68,6 +69,7 @@ class TimesheetSegmentService
                 [
                     'operation' => 'segment_added',
                     'segment_id' => (int) $segment->getKey(),
+                    'cycle_sequence' => $this->history->currentCycleSequence($locked),
                 ] + $this->auditableValues($segment),
                 null,
                 $actor,
@@ -126,6 +128,7 @@ class TimesheetSegmentService
                 [
                     'operation' => 'segment_updated',
                     'segment_id' => (int) $locked->getKey(),
+                    'cycle_sequence' => $this->history->currentCycleSequence($timesheet),
                     'changed_fields' => $changed,
                     'before' => array_intersect_key($before, array_flip($changed)),
                     'after' => array_intersect_key($this->auditableValues($locked), array_flip($changed)),
@@ -175,6 +178,7 @@ class TimesheetSegmentService
                 [
                     'operation' => 'segment_deleted',
                     'segment_id' => (int) $values['segment_id'],
+                    'cycle_sequence' => $this->history->currentCycleSequence($timesheet),
                     'category' => $values['category'],
                     'start_at' => $values['start_at'],
                     'end_at' => $values['end_at'],

@@ -348,9 +348,10 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   721 minutes le sont.
 - **Audit des segments** : les ajouts, modifications et suppressions réutilisent
   `timesheet.updated`. L'événement porte `operation`, l'identifiant du segment,
-  les champs modifiés et les valeurs utiles (catégorie, instants UTC). Une
-  suppression conserve l'identifiant et les valeurs supprimées sans prétendre
-  que le segment existe encore. Aucun motif n'est dupliqué dans `changes`.
+  `cycle_sequence` (séquence de la dernière frontière de cycle), les champs
+  modifiés et les valeurs utiles (catégorie, instants UTC). Une suppression
+  conserve l'identifiant et les valeurs supprimées sans prétendre que le segment
+  existe encore. Aucun motif n'est dupliqué dans `changes`.
 - **Motifs** : `TimesheetReason` applique `trim()`, refuse un motif obligatoire
   absent, blanc ou inférieur à 10 caractères, borne à 500 caractères Unicode et
   retourne la valeur normalisée. La même valeur doit servir à l'autorisation Gate
@@ -448,21 +449,29 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   hors périmètre de 2C. Le motif obligatoire d'une journée attendue sans heure
   reste différé au Lot 7. Aucune migration n'était nécessaire pour 2C.
 - **Correction directe du Bureau/Direction (PC1-13/PC1-33)** : après correction
-  d'un brouillon, le Bureau/Direction peut le transmettre directement à la
-  validation finale avec `TimesheetControlService::sendToValidation()`. La
+  effective d'un brouillon, le Bureau/Direction peut le transmettre directement
+  à la validation finale avec `TimesheetControlService::sendToValidation()`. La
   transition `Brouillon → Prête pour validation` est réservée au rôle
   Bureau/Direction disposant de `timesheet.validate`, exige un motif normalisé
-  de 10 à 500 caractères et revalide sous verrou l'existence et les bornes des
-  segments. L'événement `timesheet.sent_to_validation` porte l'acteur, son rôle,
+  de 10 à 500 caractères, une correction effective de segment par le même acteur
+  dans le cycle courant et revalide sous verrou l'existence et les bornes des
+  segments. `TimesheetActorHistory::hasCorrectedInCurrentCycle()` ne retient que
+  les événements `timesheet.updated` attribués au même acteur et postérieurs à
+  la dernière frontière de cycle : une création ou une suppression de segment
+  compte, une modification ne compte que si les valeurs avant/après diffèrent.
+  L'événement `timesheet.sent_to_validation` porte l'acteur, son rôle,
   l'horodatage, le motif et les statuts avant/après avec
   `path = bureau_correction`. `TimesheetActorHistory` accepte cet événement
   attribué comme preuve de complétude du cycle courant et l'inclut dans les
   actions de contrôle : l'auteur ne peut pas valider ensuite un relevé dont il
-  n'est pas propriétaire. Le propriétaire Bureau/Direction conserve
-  l'auto-validation motivée déjà définie en PC1-32. Les chefs d'équipe et les
-  conducteurs de travaux ne peuvent ni transmettre directement ni s'auto-valider.
-  Le parcours normal du salarié (`Brouillon → À contrôler → Prête → Validée`)
-  reste inchangé.
+  n'est pas propriétaire. La fiche détail expose au Bureau/Direction un
+  formulaire d'ajout, de modification et de suppression des segments d'un
+  brouillon d'un autre salarié ; les écritures passent exclusivement par
+  `TimesheetSegmentService` et restent auditées avant/après. Le propriétaire
+  Bureau/Direction conserve l'auto-validation motivée déjà définie en PC1-32.
+  Les chefs d'équipe et les conducteurs de travaux ne peuvent ni corriger ce
+  brouillon, ni transmettre directement, ni s'auto-valider. Le parcours normal
+  du salarié (`Brouillon → À contrôler → Prête → Validée`) reste inchangé.
 - **Revue des chevauchements (PC1-32, Lot A)** : `TimesheetOverlapDetector`
   reste la source de détection, avec ses avertissements non bloquants à la
   transmission. `TimesheetOverlapReviewService` persiste l'état courant dans

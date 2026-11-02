@@ -2,13 +2,48 @@
 
 use App\Enums\AuditAction;
 use App\Enums\Role;
+use App\Enums\TimeCategory;
 use App\Enums\TimesheetStatus;
 use App\Models\AuditEvent;
 use App\Models\Timesheet;
+use App\Models\TimesheetSegment;
+use App\Models\User;
+use App\Services\Audit\AuditLogger;
 use App\Services\Timesheets\TimesheetControlService;
+use App\Services\Timesheets\TimesheetSegmentService;
+use App\Services\Timesheets\TimesheetService;
+use App\Services\Timesheets\TimesheetValidationService;
+use Carbon\CarbonImmutable;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Validation\ValidationException;
 use Tests\Support\TimesheetFixtures;
+
+function pc133CorrectSegmentAsBureau(
+    Timesheet $timesheet,
+    User $bureau,
+    string $start = '2026-11-02 09:00',
+    string $end = '2026-11-02 13:00',
+): TimesheetSegment {
+    $segment = $timesheet->segments()->first();
+
+    if (! $segment instanceof TimesheetSegment) {
+        $segment = TimesheetFixtures::segment(
+            $timesheet,
+            start: '2026-11-02 08:00:00',
+            end: '2026-11-02 12:00:00',
+        );
+    }
+
+    return app(TimesheetSegmentService::class)->update(
+        $segment,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse($start, 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse($end, 'Europe/Paris'),
+        ],
+        $bureau,
+    );
+}
 
 beforeEach(function (): void {
     $this->service = app(TimesheetControlService::class);
@@ -282,6 +317,7 @@ it('refuses every control action by an inactive account', function (): void {
 it('lets the Bureau send a corrected draft directly to final validation with a reason', function (): void {
     $timesheet = TimesheetFixtures::timesheet($this->owner);
     TimesheetFixtures::segment($timesheet);
+    pc133CorrectSegmentAsBureau($timesheet, $this->bureau);
 
     $result = $this->service->sendToValidation(
         $timesheet,
@@ -323,6 +359,7 @@ it('refuses direct transmission by the owner, a chef or a conducteur', function 
 it('refuses an invalid direct transmission reason', function (): void {
     $timesheet = TimesheetFixtures::timesheet($this->owner);
     TimesheetFixtures::segment($timesheet);
+    pc133CorrectSegmentAsBureau($timesheet, $this->bureau);
 
     foreach (['', '   ', '123456789', str_repeat('a', 501)] as $reason) {
         expect(fn (): Timesheet => $this->service->sendToValidation($timesheet, $reason, $this->bureau))
@@ -335,6 +372,9 @@ it('refuses an invalid direct transmission reason', function (): void {
 
 it('refuses an empty draft or an out-of-week segment for direct transmission', function (): void {
     $empty = TimesheetFixtures::timesheet($this->owner);
+    $emptySegment = TimesheetFixtures::segment($empty);
+    pc133CorrectSegmentAsBureau($empty, $this->bureau);
+    app(TimesheetSegmentService::class)->delete($emptySegment, $this->bureau);
 
     expect(fn (): Timesheet => $this->service->sendToValidation(
         $empty,
@@ -343,6 +383,17 @@ it('refuses an empty draft or an out-of-week segment for direct transmission', f
     ))->toThrow(ValidationException::class);
 
     $invalid = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09');
+    TimesheetFixtures::segment(
+        $invalid,
+        start: '2026-11-09 08:00:00',
+        end: '2026-11-09 12:00:00',
+    );
+    pc133CorrectSegmentAsBureau(
+        $invalid,
+        $this->bureau,
+        start: '2026-11-09 09:00',
+        end: '2026-11-09 13:00',
+    );
     TimesheetFixtures::segment(
         $invalid,
         start: '2026-11-08 22:00:00',
@@ -360,9 +411,124 @@ it('refuses an empty draft or an out-of-week segment for direct transmission', f
         ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
 });
 
+it('refuses direct transmission without an effective Bureau correction', function (): void {
+    $timesheet = app(TimesheetService::class)->openFor($this->owner, '2026-11-02', $this->ownerUser);
+    app(TimesheetSegmentService::class)->add(
+        $timesheet,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 08:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 12:00', 'Europe/Paris'),
+        ],
+        $this->ownerUser,
+    );
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    ))->toThrow(ValidationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('refuses direct transmission when another user made the correction', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment($timesheet);
+    pc133CorrectSegmentAsBureau($timesheet, $this->ownerUser);
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    ))->toThrow(ValidationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('refuses a no-op Bureau correction as proof for direct transmission', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment(
+        $timesheet,
+        start: '2026-11-02 08:00:00',
+        end: '2026-11-02 12:00:00',
+    );
+    pc133CorrectSegmentAsBureau(
+        $timesheet,
+        $this->bureau,
+        start: '2026-11-02 08:00',
+        end: '2026-11-02 12:00',
+    );
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    ))->toThrow(ValidationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('refuses a Bureau correction made before the latest cycle boundary', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::segment($timesheet);
+    pc133CorrectSegmentAsBureau($timesheet, $this->bureau);
+
+    TimesheetFixtures::audit(
+        $timesheet,
+        AuditAction::TimesheetCorrectionResumed,
+        $this->ownerUser,
+    );
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    ))->toThrow(ValidationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon);
+});
+
+it('refuses to reuse a Bureau correction from before a reopening', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::Validee);
+    $segment = TimesheetFixtures::segment($timesheet);
+
+    app(AuditLogger::class)->record(
+        AuditAction::TimesheetUpdated,
+        $timesheet,
+        [
+            'operation' => 'segment_updated',
+            'segment_id' => (int) $segment->getKey(),
+            'changed_fields' => ['end_at'],
+            'before' => ['end_at' => '2026-11-02T07:00:00Z'],
+            'after' => ['end_at' => '2026-11-02T08:00:00Z'],
+        ],
+        null,
+        $this->bureau,
+    );
+
+    app(TimesheetValidationService::class)->reopen(
+        $timesheet->fresh() ?? $timesheet,
+        'Réouverture demandée.',
+        $this->bureau,
+    );
+
+    expect(fn (): Timesheet => $this->service->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    ))->toThrow(ValidationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon);
+});
+
 it('does not create a second direct transmission event on a repeated request', function (): void {
     $timesheet = TimesheetFixtures::timesheet($this->owner);
     TimesheetFixtures::segment($timesheet);
+    pc133CorrectSegmentAsBureau($timesheet, $this->bureau);
 
     $this->service->sendToValidation($timesheet, 'Correction effectuée par le Bureau.', $this->bureau);
 
@@ -378,6 +544,7 @@ it('does not create a second direct transmission event on a repeated request', f
 it('rolls back the direct transmission when the audit fails', function (): void {
     $timesheet = TimesheetFixtures::timesheet($this->owner);
     TimesheetFixtures::segment($timesheet);
+    pc133CorrectSegmentAsBureau($timesheet, $this->bureau);
 
     config(['planning.audit.key' => 'trop-court']);
 

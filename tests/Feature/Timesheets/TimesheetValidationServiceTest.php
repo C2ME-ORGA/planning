@@ -683,6 +683,17 @@ it('validates a Bureau-corrected draft sent directly to final validation', funct
         $this->ownerUser,
     );
 
+    $segment = $timesheet->segments()->firstOrFail();
+    $this->segments->update(
+        $segment,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 09:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 13:00', 'Europe/Paris'),
+        ],
+        $this->bureau,
+    );
+
     $this->controls->sendToValidation(
         $timesheet->fresh() ?? $timesheet,
         'Correction effectuée par le Bureau.',
@@ -715,6 +726,17 @@ it('refuses validation by the Bureau who sent the correction directly', function
             'end_at' => CarbonImmutable::parse('2026-11-02 12:00', 'Europe/Paris'),
         ],
         $this->ownerUser,
+    );
+
+    $segment = $timesheet->segments()->firstOrFail();
+    $this->segments->update(
+        $segment,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 09:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 13:00', 'Europe/Paris'),
+        ],
+        $this->bureau,
     );
 
     $this->controls->sendToValidation(
@@ -778,6 +800,17 @@ it('validates a direct Bureau correction in a new cycle after reopening', functi
             'end_at' => CarbonImmutable::parse('2026-11-03 12:00', 'Europe/Paris'),
         ],
         $this->ownerUser,
+    );
+
+    $segment = ($timesheet->fresh() ?? $timesheet)->segments()->firstOrFail();
+    $this->segments->update(
+        $segment,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-03 09:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-03 13:00', 'Europe/Paris'),
+        ],
+        $this->bureau,
     );
 
     $this->controls->sendToValidation(

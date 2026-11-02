@@ -72,6 +72,7 @@ it('allows editing only a draft, by its owner or the Bureau', function (): void 
     expect($this->policy->update($this->ownerUser, $draft))->toBeTrue()
         ->and($this->policy->update($this->bureau, $draft))->toBeTrue()
         ->and($this->policy->update($this->chefUser, $draft))->toBeFalse()
+        ->and($this->policy->update($this->conducteurUser, $draft))->toBeFalse()
         ->and($this->policy->update($this->otherUser, $draft))->toBeFalse();
 
     $lockedWeeks = ['2026-11-09', '2026-11-16', '2026-11-23', '2026-11-30'];

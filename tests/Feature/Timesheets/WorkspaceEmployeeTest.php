@@ -268,6 +268,21 @@ it('does not allow an employee to send a draft directly to validation', function
         ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
 });
 
+it('does not expose the Bureau correction interface to an employee', function (): void {
+    [$ownerUser, $owner] = workspaceEmployeeContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    TimesheetFixtures::segment($timesheet);
+
+    $this->actingAs($ownerUser);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertDontSee('Ajouter un segment')
+        ->call('startAddingSegment')
+        ->assertForbidden();
+
+    expect($timesheet->segments()->count())->toBe(1);
+});
+
 it('navigates between weeks through full-page Livewire redirects', function (): void {
     [$ownerUser] = workspaceEmployeeContext();
 

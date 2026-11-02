@@ -520,6 +520,8 @@ et PHPStan sont verts.
   modification directe du modèle `TimesheetSegment` est refusée hors brouillon,
   même quand le service n'est pas utilisé ; le segment stocké reste inchangé.
   La suppression directe hors brouillon reste couverte par le test existant.
+  Les événements `segment_added`, `segment_updated` et `segment_deleted`
+  portent `cycle_sequence`.
 - `tests/Feature/Timesheets/WorkspaceEmployeeTest.php` (étendu) : un segment de
   13 heures affiche l'avertissement de durée non bloquant dans la semaine et
   dans la fiche détail, sans changer le statut ni supprimer le segment.
@@ -540,13 +542,20 @@ et PHPStan sont verts.
   obligatoire, refus des salariés, chefs, conducteurs, comptes inactifs et
   statuts autres que brouillon.
 - `tests/Feature/Timesheets/TimesheetControlServiceTest.php` (étendu) :
-  transmission directe d'un brouillon corrigé, motif normalisé, audit
+  transmission directe d'un brouillon réellement corrigé, motif normalisé, audit
   `timesheet.sent_to_validation` avec acteur et `path = bureau_correction`,
-  refus des rôles non habilités, motif invalide, relevé vide, segment hors
-  semaine, requête répétée, compte inactif et rollback si l'audit échoue.
+  refus sans correction effective, correction d'un autre acteur, modification
+  sans changement, correction antérieure à la dernière frontière de cycle,
+  correction réutilisée après réouverture, refus des rôles non habilités, motif
+  invalide, relevé vide, segment hors semaine, requête répétée, compte inactif
+  et rollback si l'audit échoue.
 - `tests/Feature/Timesheets/TimesheetActorHistoryTest.php` (étendu) : la
   transmission directe est une action de contrôle, complète le cycle courant,
-  doit être postérieure à la dernière frontière et doit être attribuée.
+  doit être postérieure à la dernière frontière et doit être attribuée. La
+  preuve `hasCorrectedInCurrentCycle()` reconnaît une création, une
+  modification réelle ou une suppression, et refuse un no-op, un autre acteur,
+  un autre relevé, une action non liée à un segment ou une correction d'un
+  ancien cycle.
 - `tests/Feature/Timesheets/TimesheetValidationServiceTest.php` (étendu) :
   validation par un second Bureau, refus du Bureau auteur de la transmission
   directe, auto-validation motivée du propriétaire Bureau, nouveau cycle après
@@ -555,11 +564,16 @@ et PHPStan sont verts.
 - `tests/Feature/Timesheets/TimesheetOverlapReviewTest.php` (étendu) : une
   transmission directe par le Bureau ne contourne pas la revue des
   chevauchements ; la validation reste bloquée jusqu'à une décision acceptée.
-- `tests/Feature/Timesheets/WorkspaceBureauTest.php` (étendu) : action Livewire
-  de transmission directe avec motif obligatoire.
+- `tests/Feature/Timesheets/WorkspaceBureauTest.php` (étendu) : action de
+  transmission directe masquée avant correction effective puis affichée après
+  modification d'un segment ; ajout et suppression de segments sur le brouillon
+  d'un autre salarié avec audit `segment_added`/`segment_deleted` ; refus de
+  correction sur un relevé verrouillé ; refus de transmission directe sans
+  preuve ; transmission autorisée après correction.
 - `tests/Feature/Timesheets/WorkspaceTeamTest.php` et
-  `tests/Feature/Timesheets/WorkspaceEmployeeTest.php` (étendus) : action
-  absente de l'interface et refusée par appel direct pour un chef ou un salarié.
+  `tests/Feature/Timesheets/WorkspaceEmployeeTest.php` (étendus) : interface de
+  correction Bureau absente et refusée par appel direct pour un chef, un
+  conducteur ou un salarié ; action de transmission directe absente et refusée.
 
 Commande ciblée :
 
@@ -567,6 +581,6 @@ Commande ciblée :
 php artisan test tests/Feature/Timesheets tests/Unit/LocalDateTimeResolverTest.php tests/Unit/WorkedTimeCalculatorTest.php tests/Unit/TimesheetEnumsTest.php tests/Unit/TimesheetStatusTest.php
 ```
 
-Résultats observés localement : 305 tests ciblés réussis (1 186 assertions),
-puis suite complète à 590 tests dont 589 réussis et 1 ignoré (3 148
+Résultats observés localement : 322 tests ciblés réussis (1 247 assertions),
+puis suite complète à 607 tests dont 606 réussis et 1 ignoré (3 209
 assertions). Pint `--test` est vert et PHPStan ne remonte aucune erreur.

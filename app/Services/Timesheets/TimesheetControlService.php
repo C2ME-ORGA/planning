@@ -31,6 +31,7 @@ class TimesheetControlService
 {
     public function __construct(
         private readonly AuditLogger $audit,
+        private readonly TimesheetActorHistory $history,
     ) {}
 
     public function requestCorrection(Timesheet $timesheet, string $reason, User $actor): Timesheet
@@ -87,7 +88,13 @@ class TimesheetControlService
             ability: 'sendToValidation',
             action: AuditAction::TimesheetSentToValidation,
             reason: $reason,
-            guard: function (Timesheet $locked): void {
+            guard: function (Timesheet $locked) use ($actor): void {
+                if (! $this->history->hasCorrectedInCurrentCycle($actor, $locked)) {
+                    throw ValidationException::withMessages([
+                        'timesheet' => 'Une correction effective du Bureau/Direction est requise avant la transmission directe à la validation.',
+                    ]);
+                }
+
                 $this->assertSegmentsTransmittable($locked);
             },
             changes: ['path' => 'bureau_correction'],
