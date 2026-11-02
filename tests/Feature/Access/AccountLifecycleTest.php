@@ -8,12 +8,20 @@ use App\Notifications\AccountActivationNotification;
 use App\Services\Accounts\AccountActivationService;
 use App\Services\Accounts\AccountAdministration;
 use App\Services\Accounts\AccountProvisioner;
+use App\Services\Accounts\SessionRevoker;
 use App\Services\Audit\AuditLogger;
+use Illuminate\Contracts\Notifications\Dispatcher;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
+
+beforeEach(function () {
+    // La révocation SQL ne prend en charge que ce pilote.
+    config(['session.driver' => 'database']);
+});
 
 function insertSessionFor(User $user, string $id = 'session-test'): void
 {
@@ -66,6 +74,98 @@ it('creates an account without a known password and sends a single-use activatio
         'password' => 'Str0ng-Passw0rd!',
         'password_confirmation' => 'Str0ng-Passw0rd!',
     ])->assertStatus(410);
+});
+
+it('sends the activation notification only after commit', function () {
+    Notification::fake();
+
+    $user = User::factory()->unactivated()->create();
+
+    DB::beginTransaction();
+
+    try {
+        $token = app(AccountActivationService::class)->send($user);
+
+        Notification::assertNothingSent();
+
+        DB::commit();
+    } catch (Throwable $exception) {
+        if (DB::transactionLevel() > 1) {
+            DB::rollBack();
+        }
+
+        throw $exception;
+    }
+
+    Notification::assertSentToOnce($user, AccountActivationNotification::class);
+
+    $event = DB::table('audit_events')
+        ->where('action', AuditAction::ActivationSent->value)
+        ->first();
+
+    $activation = DB::table('account_activations')
+        ->where('user_id', $user->id)
+        ->first();
+
+    expect($event)->not->toBeNull()
+        ->and((string) json_encode($event))->not->toContain($token)
+        ->and($activation)->not->toBeNull()
+        ->and($activation->token_hash)->toBe(hash('sha256', $token));
+});
+
+it('does not send an activation notification when the activation transaction is rolled back', function () {
+    Notification::fake();
+
+    $user = User::factory()->unactivated()->create();
+
+    $audit = Mockery::mock(AuditLogger::class);
+    $audit->shouldReceive('record')->andThrow(new RuntimeException('Échec d’audit simulé.'));
+    app()->instance(AuditLogger::class, $audit);
+
+    expect(fn () => app(AccountActivationService::class)->send($user))
+        ->toThrow(RuntimeException::class);
+
+    Notification::assertNothingSent();
+    expect(DB::table('account_activations')->where('user_id', $user->id)->count())->toBe(0);
+});
+
+it('does not send an activation notification when an enclosing transaction rolls back', function () {
+    Notification::fake();
+
+    $user = User::factory()->unactivated()->create();
+
+    DB::beginTransaction();
+
+    try {
+        app(AccountActivationService::class)->send($user);
+    } finally {
+        DB::rollBack();
+    }
+
+    Notification::assertNothingSent();
+    expect(DB::table('account_activations')->where('user_id', $user->id)->count())->toBe(0);
+});
+
+it('keeps the activation and logs without the token when mail transport fails after commit', function () {
+    $user = User::factory()->unactivated()->create();
+
+    $dispatcher = Mockery::mock(Dispatcher::class);
+    $dispatcher->shouldReceive('send')->once()->andThrow(new RuntimeException('SMTP indisponible.'));
+    app()->instance(Dispatcher::class, $dispatcher);
+
+    Log::spy();
+
+    $token = app(AccountActivationService::class)->send($user);
+
+    expect(DB::table('account_activations')->where('user_id', $user->id)->count())->toBe(1)
+        ->and(DB::table('audit_events')->where('action', AuditAction::ActivationSent->value)->count())->toBe(1);
+
+    Log::shouldHaveReceived('error')->once()->withArgs(
+        function ($message, $context = []) use ($token): bool {
+            return ! str_contains((string) $message, $token)
+                && ! str_contains((string) json_encode($context), $token);
+        },
+    );
 });
 
 it('keeps email addresses globally unique, including inactive accounts', function () {
@@ -580,6 +680,74 @@ it('rolls back emergency lockdown when the audit write fails', function () {
     expect(DB::table('sessions')->count())->toBe(1)
         ->and($user->fresh()->remember_token)->toBe($initialToken);
 });
+
+it('revokes individual and global sessions with the database driver', function () {
+    $first = User::factory()->bureauDirection()->create();
+    $second = User::factory()->ouvrier()->create();
+    insertSessionFor($first, 'database-revoke-individual');
+    insertSessionFor($second, 'database-revoke-global');
+
+    $firstToken = $first->remember_token;
+    $secondToken = $second->remember_token;
+
+    expect(app(SessionRevoker::class)->revoke($first))->toBe(1)
+        ->and(DB::table('sessions')->where('user_id', $first->id)->count())->toBe(0)
+        ->and($first->fresh()->remember_token)->not->toBe($firstToken)
+        ->and(DB::table('sessions')->where('user_id', $second->id)->count())->toBe(1);
+
+    expect(app(SessionRevoker::class)->revokeAll())->toBe(1)
+        ->and(DB::table('sessions')->count())->toBe(0)
+        ->and($second->fresh()->remember_token)->not->toBe($secondToken);
+});
+
+it('refuses session revocation when the configured driver is not database', function (string $driver) {
+    config(['session.driver' => $driver]);
+
+    $user = User::factory()->bureauDirection()->create();
+    $initialToken = $user->remember_token;
+    insertSessionFor($user, 'unsupported-driver-'.$driver);
+
+    $revoker = app(SessionRevoker::class);
+
+    expect(fn () => $revoker->revoke($user))->toThrow(RuntimeException::class);
+    expect(fn () => $revoker->revokeAll())->toThrow(RuntimeException::class);
+
+    expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
+        ->and($user->fresh()->remember_token)->toBe($initialToken);
+})->with(['redis', 'file']);
+
+it('refuses session revocation when the session table is absent or incomplete', function (string $table) {
+    config(['session.table' => $table]);
+
+    $user = User::factory()->bureauDirection()->create();
+    $initialToken = $user->remember_token;
+    insertSessionFor($user, 'invalid-session-table-'.$table);
+
+    $revoker = app(SessionRevoker::class);
+
+    expect(fn () => $revoker->revoke($user))->toThrow(RuntimeException::class);
+    expect(fn () => $revoker->revokeAll())->toThrow(RuntimeException::class);
+
+    expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
+        ->and($user->fresh()->remember_token)->toBe($initialToken);
+})->with(['missing_sessions_table', 'cache']);
+
+it('fails the emergency lockdown command when the session driver is incompatible', function (string $driver) {
+    config(['session.driver' => $driver]);
+
+    $user = User::factory()->bureauDirection()->create();
+    insertSessionFor($user, 'emergency-incompatible-'.$driver);
+
+    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])
+        ->expectsOutputToContain('SESSION_DRIVER=database')
+        ->assertExitCode(1);
+
+    expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
+
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::EmergencyLockdown->value,
+    ]);
+})->with(['redis', 'file']);
 
 it('configures a fifteen minute session and a single-use password reset token', function () {
     expect(config('session.lifetime'))->toBe(15)

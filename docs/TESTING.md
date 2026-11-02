@@ -60,6 +60,14 @@ testée en insérant directement un événement dont la signature est invalide.
   du verrou en cas d’échec d’audit, la réactivation, le changement de rôle sans
   doublon d’audit, la révocation de sessions, la réinitialisation MFA et les
   rollbacks d’audit.
+- Les notifications d’activation sont testées après commit uniquement, avec
+  absence d’envoi sur rollback de la transaction d’activation ou d’une
+  transaction englobante, envoi unique, et échec de transport après commit
+  conservant l’activation et journalisant sans jeton.
+- La révocation SQL est testée avec `SESSION_DRIVER=database` pour un compte et
+  globalement. Les pilotes `redis` et `file` sont refusés sans suppression de
+  session ni renouvellement de remember token ; une table absente ou incomplète
+  est également refusée. La commande d’urgence retourne un échec explicite.
 - `tests/Feature/Access/RolePermissionMatrixTest.php` couvre le refus d’une
   seconde exception active, la double révocation, et le rollback de création ou
   de révocation lorsque l’audit échoue.
@@ -67,9 +75,23 @@ testée en insérant directement un événement dont la signature est invalide.
   `system_locks` et des transactions réelles. La suite ne crée pas de processus
   concurrents (pas de `pcntl` sous Windows) : la garantie multi-processus repose
   sur les contraintes et verrous SQL documentés, pas sur un test de fork.
-- Les sessions `file`/`redis` ne peuvent pas être annulées par une transaction
-  SQL ; les tests utilisent le pilote `array` et vérifient la table `sessions`
-  ainsi que les remember tokens.
+- Les tests de révocation configurent `SESSION_DRIVER=database` et vérifient la
+  table `sessions` ainsi que les remember tokens. Les pilotes `file`/`redis`
+  doivent être refusés par l’implémentation SQL actuelle ; ils ne sont pas pris
+  en charge.
+- Les callbacks `afterCommit` sont exécutés par le gestionnaire de transactions
+  de test de Laravel au commit de la transaction englobante simulée ; un test
+  dédié vérifie le report et l’annulation par rollback.
+- `tests/Feature/Access/SessionRevokerConnectionTest.php` crée une seconde base
+  MySQL et une connexion Laravel `sessions` pour vérifier réellement
+  `SESSION_CONNECTION` : révocation individuelle/globale sur la bonne base,
+  table par défaut intacte, table absente/incomplète, connexion inconnue,
+  connexion réellement inaccessible et commande d’urgence. Ces tests nécessitent
+  le droit MySQL `CREATE DATABASE` et suppriment la base dédiée en fin de test.
+  En CI, le compte MySQL doit disposer de ce droit ; sinon le scénario multi-base
+  ne peut pas être exécuté.
+- La suite complète s’exécute sur MySQL. Aucun test de révocation n’est
+  exécuté sur SQLite.
 
-Résultats de référence du lot 2 après durcissement : 76 tests, 397 assertions,
+Résultats de référence du lot 2 après durcissement : 95 tests, 482 assertions,
 Pint et Larastan verts.

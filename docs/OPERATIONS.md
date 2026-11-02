@@ -28,7 +28,11 @@ Comportement :
 - envoie un lien d'activation à usage unique dont la durée est fixée par
   `PLANNING_ACTIVATION_TTL_MINUTES` (1440 minutes, soit 24 heures, **valeur
   validée par le métier**) ;
-- journalise l'opération avec un acteur `null` (système).
+- journalise l'opération avec un acteur `null` (système) ;
+- envoie la notification uniquement après le commit effectif de la transaction
+  englobante (`DB::afterCommit`). Un échec du transport e-mail après commit est
+  journalisé sans le jeton ; l'activation reste valide et l'opération n'est pas
+  annulée.
 
 Le lien doit être transmis par un canal sûr. Ne jamais le journaliser ni le
 coller dans un ticket.
@@ -50,10 +54,18 @@ Après activation, la 2FA TOTP est exigée à la première connexion.
   compte concerné. Les changements de rôle et désactivations verrouillent aussi
   l'ensemble des comptes Bureau/Direction actifs, dans un ordre stable, afin de
   ne jamais retirer les deux derniers simultanément.
-- La révocation des sessions est atomique pour le pilote `database`. Avec un
-  pilote `file` ou `redis`, la suppression en base ne révoque pas la session
-  réelle : le filtre serveur `EnsureAccountIsActive` reste alors le seul
-  garde-fou immédiat.
+- La révocation SQL exige `SESSION_DRIVER=database`. Tout autre pilote est
+  refusé explicitement avant toute écriture : la désactivation ou la révocation
+  échoue et sa transaction est annulée. Le filtre serveur
+  `EnsureAccountIsActive` reste un garde-fou pour les sessions déjà ouvertes.
+- La connexion utilisée est `SESSION_CONNECTION` lorsqu’elle est définie, sinon
+  la connexion par défaut. La table et les colonnes `id`/`user_id` sont
+  contrôlées sur cette connexion. Une connexion inconnue ou indisponible, une
+  table absente ou incomplète provoquent un refus avant toute mutation.
+- Avec une connexion de sessions distincte, la suppression des sessions et le
+  renouvellement des remember tokens ne peuvent pas partager une transaction
+  SQL unique : chaque opération est transactionnelle sur sa connexion, mais
+  l’atomicité entre les deux connexions n’est pas garantie.
 
 ## 3. Double authentification
 
@@ -188,12 +200,18 @@ Révoque toutes les sessions et jetons persistants. La commande **n'accorde
 aucun droit** et ne constitue pas un break-glass. Les utilisateurs doivent se
 réauthentifier, 2FA comprise.
 
-La configuration d'audit est validée avant toute révocation. La révocation en
-base et l'événement d'audit sont ensuite dans une transaction commune : si
-l'audit échoue, les sessions et remember tokens sont restaurés. Cette garantie
-ne couvre que le pilote `database` ; des sessions `file` ou `redis` ne sont pas
-annulables par une transaction SQL et doivent être traitées par le pilote ou
-une procédure d'exploitation adaptée.
+La configuration d'audit et le pilote de session sont validés avant toute
+action. Seul `SESSION_DRIVER=database` est accepté : avec `file`, `redis` ou un
+pilote non pris en charge, la commande échoue explicitement sans supprimer de
+session et sans renouveler de remember token. La connexion utilisée est
+`SESSION_CONNECTION` si elle est définie, sinon la connexion par défaut.
+
+Avec la connexion par défaut, la révocation et l'événement d'audit sont dans une
+transaction commune : si l'audit échoue, les sessions et remember tokens sont
+restaurés. Avec une connexion de sessions distincte, la suppression des sessions
+est validée sur cette connexion et ne peut pas être annulée par le rollback de
+la transaction d'audit de la connexion par défaut. La commande ne doit jamais
+annoncer une révocation réussie si elle a échoué.
 
 ## 7. Vérifications avant mise en service
 
@@ -203,6 +221,11 @@ une procédure d'exploitation adaptée.
 - `APP_KEY` défini et sauvegardé séparément ; `PLANNING_AUDIT_KEY` distincte et
   sauvegardée séparément ; `APP_DEBUG=false` ;
   `SESSION_SECURE_COOKIE=true` en HTTPS.
+- `SESSION_DRIVER=database` : indispensable pour la révocation SQL des
+  sessions et pour la désactivation immédiate des comptes.
+- Si `SESSION_CONNECTION` est défini, vérifier que cette connexion pointe vers
+  la base contenant la table de sessions et que l’utilisateur applicatif y
+  dispose des droits de lecture et de suppression.
 - Aucun compte de test, aucune donnée réelle, aucun secret dans le dépôt.
 - Les triggers d'audit sont présents (`SHOW TRIGGERS`).
 - La table `system_locks` est migrée et le marqueur

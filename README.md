@@ -204,6 +204,9 @@ production. Ne jamais exécuter de seeder de démonstration sur une base réelle
 - `APP_ENV=production`
 - `APP_DEBUG=false`
 - `APP_URL` avec le domaine HTTPS réel
+- `SESSION_DRIVER=database` pour la révocation SQL des sessions
+- `SESSION_CONNECTION=sessions` si les sessions utilisent une connexion dédiée ;
+  la révocation utilise alors cette connexion
 - `SESSION_SECURE_COOKIE=true` (valeur par défaut en production)
 - Identifiants MySQL dédiés, jamais `root`
 - Secrets uniquement dans l'environnement de déploiement
