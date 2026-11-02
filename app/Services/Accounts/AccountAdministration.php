@@ -13,6 +13,7 @@ use App\Services\Employees\TeamLeadershipService;
 use Closure;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
+use Throwable;
 
 class AccountAdministration
 {
@@ -29,20 +30,26 @@ class AccountAdministration
         $this->assertReason($reason);
         $this->assertNotSelf($target, $actor, 'Un compte ne peut pas se désactiver lui-même.');
 
-        $this->withEmployeeLock($target, function () use ($target, $reason, $actor): void {
-            DB::transaction(function () use ($target, $reason, $actor): void {
-                /** @var User $target */
-                $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
+        try {
+            $this->withEmployeeLock($target, function () use ($target, $reason, $actor): void {
+                DB::transaction(function () use ($target, $reason, $actor): void {
+                    /** @var User $target */
+                    $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
 
-                if (! $target->isActive()) {
-                    throw new RuntimeException('Ce compte est déjà désactivé.');
-                }
+                    if (! $target->isActive()) {
+                        throw new RuntimeException('Ce compte est déjà désactivé.');
+                    }
 
-                $this->assertNotLastBureauDirection($target);
-                $this->leaderships->assertDeactivationAllowed($target);
-                $this->applyDeactivation($target, $reason, $actor);
+                    $this->assertNotLastBureauDirection($target);
+                    $this->leaderships->assertDeactivationAllowed($target);
+                    $this->applyDeactivation($target, $reason, $actor);
+                });
             });
-        });
+        } catch (SessionRevocationException $exception) {
+            $this->recordRevocationFailure($exception, $target, $reason, $actor);
+
+            throw $exception;
+        }
     }
 
     /**
@@ -96,32 +103,38 @@ class AccountAdministration
         $this->assertReason($reason);
         $this->assertNotSelf($target, $actor, 'Un compte ne peut pas se réactiver lui-même.');
 
-        $this->withEmployeeLock($target, function () use ($target, $reason, $actor): void {
-            DB::transaction(function () use ($target, $reason, $actor): void {
-                /** @var User $target */
-                $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
+        try {
+            $this->withEmployeeLock($target, function () use ($target, $reason, $actor): void {
+                DB::transaction(function () use ($target, $reason, $actor): void {
+                    /** @var User $target */
+                    $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
 
-                if ($target->isActive()) {
-                    throw new RuntimeException('Ce compte est déjà actif.');
-                }
+                    if ($target->isActive()) {
+                        throw new RuntimeException('Ce compte est déjà actif.');
+                    }
 
-                $target->forceFill([
-                    'is_active' => true,
-                    'deactivated_at' => null,
-                    'deactivation_reason' => null,
-                ])->save();
+                    $target->forceFill([
+                        'is_active' => true,
+                        'deactivated_at' => null,
+                        'deactivation_reason' => null,
+                    ])->save();
 
-                $this->audit->record(
-                    AuditAction::AccountReactivated,
-                    $target,
-                    ['is_active' => ['old' => false, 'new' => true]],
-                    $reason,
-                    $actor,
-                );
+                    $result = $this->sessions->revoke($target);
 
-                $this->sessions->revoke($target);
+                    $this->audit->record(
+                        AuditAction::AccountReactivated,
+                        $target,
+                        ['is_active' => ['old' => false, 'new' => true]] + $this->sessionAuditChanges($result),
+                        $reason,
+                        $actor,
+                    );
+                });
             });
-        });
+        } catch (SessionRevocationException $exception) {
+            $this->recordRevocationFailure($exception, $target, $reason, $actor);
+
+            throw $exception;
+        }
     }
 
     public function changeRole(User $target, Role $role, User $actor): void
@@ -133,28 +146,52 @@ class AccountAdministration
             return;
         }
 
-        $this->withEmployeeLock($target, function () use ($target, $role): void {
-            DB::transaction(function () use ($target, $role): void {
-                /** @var User $target */
-                $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
+        try {
+            $this->withEmployeeLock($target, function () use ($target, $role, $actor): void {
+                DB::transaction(function () use ($target, $role, $actor): void {
+                    /** @var User $target */
+                    $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
 
-                if ($target->role === $role) {
-                    return;
-                }
+                    if ($target->role === $role) {
+                        return;
+                    }
 
-                if ($target->isBureauDirection() && $role !== Role::BureauDirection) {
-                    $this->assertNotLastBureauDirection($target);
-                }
+                    if ($target->isBureauDirection() && $role !== Role::BureauDirection) {
+                        $this->assertNotLastBureauDirection($target);
+                    }
 
-                // Une responsabilité d'équipe non terminée exige un rôle compatible.
-                $this->leaderships->assertRoleRemovalAllowed($target, $role);
+                    // Une responsabilité d'équipe non terminée exige un rôle compatible.
+                    $this->leaderships->assertRoleRemovalAllowed($target, $role);
 
-                $target->forceFill(['role' => $role])->save();
+                    $target->forceFill(['role' => $role])->save();
 
-                // Le journal est écrit par UserObserver (acteur = utilisateur courant).
-                $this->sessions->revoke($target);
+                    // Le journal du changement de rôle est écrit par UserObserver.
+                    // L'événement ci-dessous trace explicitement la révocation
+                    // des sessions et son résultat physique.
+                    $result = $this->sessions->revoke($target);
+
+                    $this->audit->record(
+                        AuditAction::SessionsRevoked,
+                        $target,
+                        $this->sessionAuditChanges($result) + [
+                            'cause' => 'account.role_changed',
+                            'role' => $role->value,
+                        ],
+                        'Révocation des sessions après changement de rôle.',
+                        $actor,
+                    );
+                });
             });
-        });
+        } catch (SessionRevocationException $exception) {
+            $this->recordRevocationFailure(
+                $exception,
+                $target,
+                'Échec de la révocation des sessions après changement de rôle.',
+                $actor,
+            );
+
+            throw $exception;
+        }
     }
 
     public function resetMultiFactor(User $target, string $reason, User $actor): void
@@ -162,14 +199,28 @@ class AccountAdministration
         $this->assertCan($actor, Permission::AccountsUpdate);
         $this->assertReason($reason);
 
-        $target->forceFill([
-            'app_authentication_secret' => null,
-            'app_authentication_recovery_codes' => null,
-        ])->save();
+        try {
+            DB::transaction(function () use ($target, $reason, $actor): void {
+                $target->forceFill([
+                    'app_authentication_secret' => null,
+                    'app_authentication_recovery_codes' => null,
+                ])->save();
 
-        $this->sessions->revoke($target);
+                $result = $this->sessions->revoke($target);
 
-        $this->audit->record(AuditAction::MfaReset, $target, [], $reason, $actor);
+                $this->audit->record(
+                    AuditAction::MfaReset,
+                    $target,
+                    $this->sessionAuditChanges($result),
+                    $reason,
+                    $actor,
+                );
+            });
+        } catch (SessionRevocationException $exception) {
+            $this->recordRevocationFailure($exception, $target, $reason, $actor);
+
+            throw $exception;
+        }
     }
 
     public function revokeSessions(User $target, string $reason, User $actor): void
@@ -177,12 +228,18 @@ class AccountAdministration
         $this->assertCan($actor, Permission::AccountsUpdate);
         $this->assertReason($reason);
 
-        $revoked = $this->sessions->revoke($target);
+        try {
+            $result = $this->sessions->revoke($target);
+        } catch (SessionRevocationException $exception) {
+            $this->recordRevocationFailure($exception, $target, $reason, $actor);
+
+            throw $exception;
+        }
 
         $this->audit->record(
             AuditAction::SessionsRevoked,
             $target,
-            ['sessions_revoked' => $revoked],
+            $this->sessionAuditChanges($result),
             $reason,
             $actor,
         );
@@ -230,18 +287,60 @@ class AccountAdministration
             'deactivation_reason' => $reason,
         ])->save();
 
-        $revoked = $this->sessions->revoke($target);
+        $result = $this->sessions->revoke($target);
 
         $this->audit->record(
             AuditAction::AccountDeactivated,
             $target,
-            [
-                'is_active' => ['old' => true, 'new' => false],
-                'sessions_revoked' => $revoked,
-            ],
+            ['is_active' => ['old' => true, 'new' => false]] + $this->sessionAuditChanges($result),
             $reason,
             $actor,
         );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function sessionAuditChanges(SessionRevocationResult $result): array
+    {
+        return [
+            'sessions_revoked' => $result->deletedSessions,
+            'session_scope' => $result->scope,
+            'session_generation' => $result->generation,
+            'session_storage' => $result->sessionDriver,
+            'session_cleanup_required' => $result->physicalCleanupRequired,
+            'session_cleanup_state' => $result->physicalCleanupState()->value,
+            'session_cleanup_complete' => $result->isPhysicalCleanupComplete(),
+            'session_cleanup_failed' => $result->hasPhysicalCleanupFailure(),
+            'session_cleanup_error' => $result->physicalError,
+        ];
+    }
+
+    private function recordRevocationFailure(
+        SessionRevocationException $exception,
+        ?User $target,
+        ?string $reason,
+        ?User $actor,
+    ): void {
+        try {
+            $this->audit->record(
+                AuditAction::SessionRevocationFailed,
+                $target,
+                [
+                    'scope' => $exception->scope,
+                    'step' => $exception->step,
+                    'error_class' => $exception->getPrevious() === null
+                        ? null
+                        : $exception->getPrevious()::class,
+                ],
+                $reason,
+                $actor,
+            );
+        } catch (Throwable $auditFailure) {
+            // L'échec initial reste prioritaire. L'absence d'audit est
+            // signalée sans masquer l'exception de sécurité d'origine.
+            report($auditFailure);
+        }
     }
 
     private function withEmployeeLock(User $target, Closure $callback): void

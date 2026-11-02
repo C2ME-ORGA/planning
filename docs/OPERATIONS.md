@@ -152,15 +152,82 @@ planifiée après la disparition de ces événements ou après ré-ancrage docum
 ## 6. Urgence et révocation de session
 
 ```bash
-php artisan planning:emergency-lockdown --confirm
+php artisan planning:emergency-lockdown \
+  --actor=bureau@example.test \
+  --reason="Incident de sécurité : compromission suspectée." \
+  --confirm
 ```
 
 Révoque toutes les sessions et jetons persistants. La commande **n'accorde
 aucun droit** et ne constitue pas un break-glass. Les utilisateurs doivent se
 réauthentifier, 2FA comprise.
 
+L’acteur doit être un compte actif disposant de `accounts.update` (Bureau /
+Direction). Le motif est obligatoire (10 à 500 caractères). Un événement
+`system.emergency_lockdown_requested` est écrit avant l’action. Si cet audit
+d’intention échoue, la commande refuse de démarrer : aucune session n’est
+révoquée. En environnement automatisé, l’acteur et le motif doivent donc être
+fournis explicitement ; aucun acteur fictif n’est accepté.
+
+La commande incrémente la génération globale d'authentification et invalide
+tous les cookies remember-me dans une transaction unique. Dès ce commit, les
+anciennes sessions sont refusées à la requête suivante, même si le nettoyage
+physique échoue. La suppression SQL cible `session.connection` /
+`session.table` et n'est requise que pour le pilote `database`.
+
+Si le nettoyage physique échoue, la commande retourne un échec opérationnel,
+mais l'audit `EmergencyLockdown` indique `fully_completed = false` avec la
+génération globale active : la révocation logique reste effective. Vérifier
+ensuite le stockage de sessions et relancer le nettoyage si nécessaire.
+
+Les états de nettoyage sont explicites : `physical_cleanup_state` vaut
+`completed`, `failed` ou `not_applicable`. `fully_completed` n'est faux que
+pour un échec physique requis.
+
+### Vérification après révocation globale
+
+- L'audit `system.emergency_lockdown_requested` contient l’acteur et le motif.
+- L'audit `system.emergency_lockdown` contient `global_generation`,
+  `physical_cleanup_required`, `physical_cleanup_state`,
+  `physical_cleanup_error` et `fully_completed`.
+- Une ancienne session ou un ancien cookie remember-me doit être redirigé vers
+  `/login` ou `/admin/login`.
+- Une nouvelle connexion doit fonctionner pour un compte actif et rouvrir une
+  session portant la nouvelle génération.
+
+### Retour arrière interdit sur le schéma de sécurité
+
+Les migrations `authentication_state` et `users.session_version` refusent leur
+`down()` : supprimer la table réinitialiserait la génération globale et pourrait
+rendre valides des sessions d’une génération antérieure ; supprimer la colonne
+`session_version` désactiverait le contrôle de révocation individuelle. Un
+retour arrière nécessite une intervention manuelle encadrée :
+
+1. arrêter le code PC1-12 ou maintenir le contrôle de génération actif ;
+2. révoquer toutes les sessions et tous les jetons remember-me ;
+3. purger les stockages `file`/`redis`/`database` concernés ;
+4. seulement ensuite, retirer la table selon la procédure d’exploitation.
+
+Ne jamais exécuter `migrate:rollback` sur le batch de sécurité en production.
+
 ## 7. Vérifications avant mise en service
 
+- Appliquer les migrations de sécurité **avant** les migrations métier sans
+  rapport, afin que le code ne tourne jamais sans `authentication_state` ni
+  `users.session_version` :
+
+  ```bash
+  php artisan planning:security:install
+  php artisan planning:security:install --check
+  ```
+
+  La commande applique les deux migrations de sécurité dans des batches dédiés
+  (une migration par batch : `authentication_state`, puis
+  `users.session_version`) et vérifie le schéma.
+  Elle est indépendante des migrations de feuilles de temps. Les migrations
+  sont additives et ne modifient aucune donnée existante.
+  `2026_10_27_000007` est volontairement antérieure aux migrations métier ;
+  `2026_11_02_000001` est appliquée explicitement par la commande.
 - `php artisan migrate --pretend` relu, puis migration contrôlée.
 - `php artisan planning:audit:verify` sur une base vierge puis après tests.
 - `php artisan test`, `composer lint:check`, `composer types:check` verts.

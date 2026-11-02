@@ -10,6 +10,7 @@ use App\Models\EmploymentPeriod;
 use App\Models\Team;
 use App\Models\TeamAssignment;
 use App\Models\User;
+use App\Services\Accounts\SessionRevocationException;
 use App\Services\Audit\AuditLogger;
 use App\Services\Employees\EmployeeLifecycleService;
 use App\Services\Employees\EmployeeService;
@@ -320,6 +321,48 @@ it('rolls back the exit when the account deactivation fails', function () {
     ]);
 });
 
+it('audits a session revocation failure during an employee exit after rollback', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->conducteur()->create();
+    $employee = Employee::factory()->create();
+    EmploymentPeriod::factory()->for($employee)->create([
+        'start_date' => now()->subYear()->toDateString(),
+        'end_date' => null,
+    ]);
+    app(EmployeeService::class)->linkAccount($employee, $target, $actor);
+
+    $periodBefore = $employee->fresh()->employmentPeriods()->firstOrFail();
+    $rememberToken = $target->remember_token;
+    $sessionVersion = (int) $target->session_version;
+
+    DB::beforeExecuting(function (string $query): void {
+        if (str_starts_with(strtolower($query), 'update') && str_contains($query, 'session_version')) {
+            throw new RuntimeException('Panne injectée avant la sortie du salarié.');
+        }
+    });
+
+    expect(fn () => app(EmployeeLifecycleService::class)->exit(
+        $employee,
+        now()->toDateString(),
+        $actor,
+        true,
+    ))->toThrow(SessionRevocationException::class);
+
+    $event = AuditEvent::query()
+        ->where('action', AuditAction::SessionRevocationFailed->value)
+        ->where('subject_id', (string) $target->id)
+        ->firstOrFail();
+
+    expect($periodBefore->fresh()->end_date)->toBeNull()
+        ->and($target->fresh()->isActive())->toBeTrue()
+        ->and($target->fresh()->session_version)->toBe($sessionVersion)
+        ->and($target->fresh()->remember_token)->toBe($rememberToken)
+        ->and($event->changes['cause'])->toBe('employee.exit')
+        ->and($event->changes['scope'])->toBe('user')
+        ->and($event->changes['step'])->toBe('logical')
+        ->and(AuditEvent::query()->where('action', AuditAction::EmployeeExited->value)->exists())->toBeFalse();
+});
+
 it('refuses immediate account deactivation for a future exit', function () {
     $actor = User::factory()->bureauDirection()->create();
     $employee = Employee::factory()->create();
@@ -467,6 +510,10 @@ it('fails when the period is closed between the service re-read and the guarded 
     // doit précéder l'UPDATE métier protégé du service. L'UPDATE d'injection
     // génère lui-même un événement QueryExecuted réentrant : $injecting
     // l'identifie et l'ignore pour ne jamais le confondre avec l'UPDATE métier.
+    //
+    // DB::listen est volontaire ici : il ne simule pas une panne SQL, mais un
+    // entrelacement concurrent APRÈS la relecture. Les simulations d'échec
+    // utilisent DB::beforeExecuting() pour échouer avant toute exécution.
     $injected = false;
     $injecting = false;
     $matchedSql = null;

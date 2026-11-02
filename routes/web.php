@@ -2,7 +2,6 @@
 
 use App\Http\Controllers\Auth\AccountActivationController;
 use App\Http\Controllers\Auth\TerrainLoginController;
-use App\Http\Middleware\EnsureAccountIsActive;
 use App\Livewire\Planning\MobilePlanning;
 use App\Livewire\Timesheets\Bureau\BatchValidation;
 use App\Livewire\Timesheets\Bureau\Journal;
@@ -22,7 +21,7 @@ Route::post('/login', [TerrainLoginController::class, 'store'])
     ->middleware(['guest', 'throttle:10,1'])
     ->name('login.store');
 Route::post('/logout', [TerrainLoginController::class, 'destroy'])
-    ->middleware(['auth', EnsureAccountIsActive::class])
+    ->middleware('auth')
     ->name('logout');
 
 Route::middleware(['guest', 'throttle:10,1'])->group(function (): void {
@@ -33,7 +32,7 @@ Route::middleware(['guest', 'throttle:10,1'])->group(function (): void {
         ->name('account.activation.store');
 });
 
-Route::middleware(['auth', EnsureAccountIsActive::class])->group(function (): void {
+Route::middleware('auth')->group(function (): void {
     Route::get('/planning', MobilePlanning::class)->name('planning.mobile');
 
     Route::prefix('espace')->name('workspace.')->group(function (): void {
