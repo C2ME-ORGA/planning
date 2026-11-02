@@ -3,55 +3,88 @@
 namespace App\Http\Middleware;
 
 use App\Models\User;
+use App\Services\Accounts\AuthenticationGeneration;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Coupe immédiatement l'accès d'un compte désactivé, même si sa session
- * existait déjà. La révocation en base reste la mesure principale ; ce filtre
- * protège contre un pilote de session ou un cache encore chaud.
+ * Contrôle serveur du cycle de vie de l'authentification.
  *
- * Il vérifie également la version d'authentification enregistrée dans la
- * session : une session antérieure à une révocation est refusée, y compris
- * après réactivation du compte et quel que soit le pilote de session.
+ * Fail-closed : une session doit porter une version utilisateur et une
+ * génération globale valides. Une session sans marqueur, avec un marqueur
+ * invalide ou issue d'une génération antérieure est détruite immédiatement.
+ *
+ * La génération globale est lue avant la résolution de l'utilisateur : si une
+ * révocation globale intervient pendant la requête (y compris pendant une
+ * authentification remember-me), la différence est détectée et la session est
+ * refusée.
  */
 class EnsureAccountIsActive
 {
+    public function __construct(
+        private readonly AuthenticationGeneration $generation,
+    ) {}
+
     public function handle(Request $request, Closure $next): Response
     {
+        $generationAtStart = $this->generation->current();
+
+        // Rendue disponible au listener de connexion pour que le marqueur
+        // enregistré soit celui du début de requête, jamais une génération
+        // apparue pendant l'authentification.
+        $request->attributes->set('auth.global_generation_at_start', $generationAtStart);
+
         $user = Auth::user();
 
-        if ($user instanceof User && (! $user->is_active || $this->sessionIsStale($request, $user))) {
+        $rememberInvalidated = (bool) $request->attributes->get('auth.remember_invalidated', false);
+        $generationChanged = $this->generation->current() !== $generationAtStart;
+
+        if ($user instanceof User && (
+            ! $user->is_active
+            || $rememberInvalidated
+            || $generationChanged
+            || $this->sessionIsStale($request, $user, $generationAtStart)
+        )) {
             Auth::guard()->logout();
 
             $request->session()->invalidate();
             $request->session()->regenerateToken();
 
-            $loginPath = $request->is('admin') || $request->is('admin/*')
-                ? '/admin/login'
-                : route('login');
-
-            return redirect($loginPath)
+            return redirect($this->loginPath($request))
                 ->withErrors(['email' => 'Ces identifiants ne correspondent pas à nos enregistrements.']);
         }
 
         return $next($request);
     }
 
-    private function sessionIsStale(Request $request, User $user): bool
+    private function sessionIsStale(Request $request, User $user, int $generationAtStart): bool
     {
-        $version = (int) $user->session_version;
+        $version = $request->session()->get('auth.session_version');
+        $generation = $request->session()->get('auth.global_generation');
 
-        // Avant toute révocation, les sessions historiques sans marqueur
-        // restent acceptées : la compatibilité est conservée au déploiement.
-        if ($version === 0) {
-            return false;
+        if (! is_numeric($version) || ! is_numeric($generation)) {
+            return true;
         }
 
-        $recorded = $request->session()->get('auth.session_version');
+        return (int) $version !== (int) $user->session_version
+            || (int) $generation !== $generationAtStart;
+    }
 
-        return $recorded === null || (int) $recorded !== $version;
+    /**
+     * Les requêtes Livewire du panneau Filament passent par `/livewire/update`.
+     * Le référent permet de renvoyer l'utilisateur vers le bon écran de
+     * connexion sans jamais construire d'URL depuis une valeur non fiable.
+     */
+    private function loginPath(Request $request): string
+    {
+        $referer = (string) $request->headers->get('referer');
+
+        if ($request->is('admin') || $request->is('admin/*') || str_contains($referer, '/admin')) {
+            return '/admin/login';
+        }
+
+        return route('login');
     }
 }

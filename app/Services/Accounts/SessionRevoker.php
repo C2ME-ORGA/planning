@@ -6,47 +6,110 @@ use App\Models\User;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use RuntimeException;
+use Throwable;
 
 /**
- * Révocation immédiate des sessions et jetons persistants d'un compte.
+ * Révocation immédiate des sessions et jetons persistants.
  *
- * Les lignes de session sont supprimées sur la connexion et dans la table
- * réellement configurées (`session.connection`, `session.table`). Ce nettoyage
- * SQL n'est toutefois décisif que pour le pilote `database`.
+ * Ordre volontaire pour chaque portée :
+ * 1. invalidation logique (version utilisateur ou génération globale) ;
+ * 2. rotation des identifiants persistants ;
+ * 3. nettoyage physique des sessions si le stockage le permet.
  *
- * Pour les autres pilotes (`file`, `redis`, etc.), Laravel ne permet pas de
- * retrouver de façon fiable toutes les sessions d'un utilisateur. Le compteur
- * `users.session_version` sert alors de garde-fou indépendant du stockage :
- * il est incrémenté à chaque révocation, et `EnsureAccountIsActive` refuse
- * toute session dont la version enregistrée à la connexion ne correspond plus.
- * La révocation reste donc effective après une réactivation, même si
- * d'anciennes sessions subsistent dans le stockage du pilote.
+ * Une panne du nettoyage physique ne peut donc pas rendre une ancienne
+ * session valide. Une panne de l'invalidation logique est propagée : aucun
+ * audit de réussite ne doit être écrit dans ce cas.
  */
 class SessionRevoker
 {
-    public function revoke(User $user): int
+    public function __construct(
+        private readonly AuthenticationGeneration $generation,
+    ) {}
+
+    public function revoke(User $user): SessionRevocationResult
     {
-        $deleted = $this->sessionTable()->where('user_id', $user->getKey())->delete();
+        // UPDATE unique et atomique sur la connexion des utilisateurs : la
+        // version et le jeton persistants basculent ensemble.
+        $updated = User::query()
+            ->whereKey($user->getKey())
+            ->update([
+                'remember_token' => Str::random(60),
+                'session_version' => DB::raw('session_version + 1'),
+            ]);
 
-        $this->rotateCredentials($user);
+        if ($updated !== 1) {
+            throw new RuntimeException('Le compte à révoquer est introuvable.');
+        }
 
-        return $deleted;
+        $version = User::query()->whereKey($user->getKey())->value('session_version');
+
+        if ($version === null) {
+            throw new RuntimeException('La version de session du compte est introuvable.');
+        }
+
+        return $this->buildResult('user', (int) $version, $this->purgeSessions($user->getKey()));
     }
 
-    public function revokeAll(): int
+    public function revokeAll(): SessionRevocationResult
     {
-        $deleted = $this->sessionTable()->delete();
+        // Étape critique : génération globale et invalidation de tous les
+        // cookies remember-me dans une seule transaction. Une interruption
+        // après le commit laisse déjà toutes les anciennes authentifications
+        // inutilisables.
+        $generation = $this->generation->revokeAll();
 
-        // Chunking par identifiant : aucun chargement complet de la table en
-        // mémoire, y compris sur un volume important de comptes.
-        User::query()
-            ->select(['id'])
-            ->lazyById(500)
-            ->each(function (User $user): void {
-                $this->rotateCredentials($user);
-            });
+        return $this->buildResult('global', $generation, $this->purgeSessions(null));
+    }
 
-        return $deleted;
+    /**
+     * @return array{deleted: int, driver: string, required: bool, error: ?string}
+     */
+    private function purgeSessions(?int $userId): array
+    {
+        $driver = (string) config('session.driver');
+        $required = $driver === 'database';
+
+        try {
+            $query = $this->sessionTable();
+
+            if ($userId !== null) {
+                $query->where('user_id', $userId);
+            }
+
+            return [
+                'deleted' => $query->delete(),
+                'driver' => $driver,
+                'required' => $required,
+                'error' => null,
+            ];
+        } catch (Throwable $exception) {
+            if ($required) {
+                report($exception);
+            }
+
+            return [
+                'deleted' => 0,
+                'driver' => $driver,
+                'required' => $required,
+                'error' => $required ? $exception::class : null,
+            ];
+        }
+    }
+
+    /**
+     * @param  array{deleted: int, driver: string, required: bool, error: ?string}  $physical
+     */
+    private function buildResult(string $scope, int $generation, array $physical): SessionRevocationResult
+    {
+        return new SessionRevocationResult(
+            scope: $scope,
+            generation: $generation,
+            deletedSessions: $physical['deleted'],
+            sessionDriver: $physical['driver'],
+            physicalCleanupRequired: $physical['required'],
+            physicalError: $physical['error'],
+        );
     }
 
     /**
@@ -61,19 +124,5 @@ class SessionRevoker
         $table = (string) config('session.table', 'sessions');
 
         return DB::connection($connection)->table($table);
-    }
-
-    /**
-     * Renouvelle le jeton "remember me" et invalide toutes les sessions
-     * existantes via le compteur de version.
-     */
-    private function rotateCredentials(User $user): void
-    {
-        User::query()
-            ->whereKey($user->getKey())
-            ->update([
-                'remember_token' => Str::random(60),
-                'session_version' => DB::raw('session_version + 1'),
-            ]);
     }
 }

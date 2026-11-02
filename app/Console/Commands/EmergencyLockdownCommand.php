@@ -27,16 +27,36 @@ class EmergencyLockdownCommand extends Command
             return self::FAILURE;
         }
 
-        $revoked = $sessions->revokeAll();
+        $result = $sessions->revokeAll();
 
         $audit->record(
             AuditAction::EmergencyLockdown,
             null,
-            ['sessions_revoked' => $revoked],
+            [
+                'global_generation' => $result->generation,
+                'sessions_revoked' => $result->deletedSessions,
+                'session_storage' => $result->sessionDriver,
+                'physical_cleanup_required' => $result->physicalCleanupRequired,
+                'physical_cleanup_error' => $result->physicalError,
+                'fully_completed' => $result->isPhysicalCleanupComplete(),
+            ],
             'Révocation globale des sessions via la procédure d’urgence.',
         );
 
-        $this->info("{$revoked} session(s) révoquée(s). Aucun droit supplémentaire n’a été accordé.");
+        $this->info(
+            "Génération globale {$result->generation} active : toutes les anciennes sessions et cookies persistants sont invalides.",
+        );
+
+        if (! $result->isPhysicalCleanupComplete()) {
+            $this->warn(
+                'La révocation logique est effective, mais le nettoyage physique des sessions a échoué. '
+                .'Les anciennes sessions restent inutilisables ; vérifiez le stockage de sessions.',
+            );
+
+            return self::FAILURE;
+        }
+
+        $this->info("{$result->deletedSessions} session(s) supprimée(s) du stockage physique.");
 
         return self::SUCCESS;
     }

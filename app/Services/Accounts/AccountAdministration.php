@@ -111,15 +111,15 @@ class AccountAdministration
                     'deactivation_reason' => null,
                 ])->save();
 
+                $result = $this->sessions->revoke($target);
+
                 $this->audit->record(
                     AuditAction::AccountReactivated,
                     $target,
-                    ['is_active' => ['old' => false, 'new' => true]],
+                    ['is_active' => ['old' => false, 'new' => true]] + $this->sessionAuditChanges($result),
                     $reason,
                     $actor,
                 );
-
-                $this->sessions->revoke($target);
             });
         });
     }
@@ -162,14 +162,22 @@ class AccountAdministration
         $this->assertCan($actor, Permission::AccountsUpdate);
         $this->assertReason($reason);
 
-        $target->forceFill([
-            'app_authentication_secret' => null,
-            'app_authentication_recovery_codes' => null,
-        ])->save();
+        DB::transaction(function () use ($target, $reason, $actor): void {
+            $target->forceFill([
+                'app_authentication_secret' => null,
+                'app_authentication_recovery_codes' => null,
+            ])->save();
 
-        $this->sessions->revoke($target);
+            $result = $this->sessions->revoke($target);
 
-        $this->audit->record(AuditAction::MfaReset, $target, [], $reason, $actor);
+            $this->audit->record(
+                AuditAction::MfaReset,
+                $target,
+                $this->sessionAuditChanges($result),
+                $reason,
+                $actor,
+            );
+        });
     }
 
     public function revokeSessions(User $target, string $reason, User $actor): void
@@ -177,12 +185,12 @@ class AccountAdministration
         $this->assertCan($actor, Permission::AccountsUpdate);
         $this->assertReason($reason);
 
-        $revoked = $this->sessions->revoke($target);
+        $result = $this->sessions->revoke($target);
 
         $this->audit->record(
             AuditAction::SessionsRevoked,
             $target,
-            ['sessions_revoked' => $revoked],
+            $this->sessionAuditChanges($result),
             $reason,
             $actor,
         );
@@ -230,18 +238,31 @@ class AccountAdministration
             'deactivation_reason' => $reason,
         ])->save();
 
-        $revoked = $this->sessions->revoke($target);
+        $result = $this->sessions->revoke($target);
 
         $this->audit->record(
             AuditAction::AccountDeactivated,
             $target,
-            [
-                'is_active' => ['old' => true, 'new' => false],
-                'sessions_revoked' => $revoked,
-            ],
+            ['is_active' => ['old' => true, 'new' => false]] + $this->sessionAuditChanges($result),
             $reason,
             $actor,
         );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function sessionAuditChanges(SessionRevocationResult $result): array
+    {
+        return [
+            'sessions_revoked' => $result->deletedSessions,
+            'session_scope' => $result->scope,
+            'session_generation' => $result->generation,
+            'session_storage' => $result->sessionDriver,
+            'session_cleanup_required' => $result->physicalCleanupRequired,
+            'session_cleanup_complete' => $result->isPhysicalCleanupComplete(),
+            'session_cleanup_error' => $result->physicalError,
+        ];
     }
 
     private function withEmployeeLock(User $target, Closure $callback): void

@@ -159,14 +159,41 @@ Révoque toutes les sessions et jetons persistants. La commande **n'accorde
 aucun droit** et ne constitue pas un break-glass. Les utilisateurs doivent se
 réauthentifier, 2FA comprise.
 
-La suppression SQL cible `session.connection` / `session.table` lorsqu'ils sont
-définis. Avec un pilote de session autre que `database`, l'invalidation
-repose en plus sur le compteur `users.session_version`, contrôlé à chaque
-requête : une session antérieure à la révocation reste inutilisable, même
-après réactivation du compte.
+La commande incrémente la génération globale d'authentification et invalide
+tous les cookies remember-me dans une transaction unique. Dès ce commit, les
+anciennes sessions sont refusées à la requête suivante, même si le nettoyage
+physique échoue. La suppression SQL cible `session.connection` /
+`session.table` et n'est requise que pour le pilote `database`.
+
+Si le nettoyage physique échoue, la commande retourne un échec opérationnel,
+mais l'audit `EmergencyLockdown` indique `fully_completed = false` avec la
+génération globale active : la révocation logique reste effective. Vérifier
+ensuite le stockage de sessions et relancer le nettoyage si nécessaire.
+
+### Vérification après révocation globale
+
+- L'audit `audit.emergency_lockdown` contient `global_generation`,
+  `physical_cleanup_required`, `physical_cleanup_error` et `fully_completed`.
+- Une ancienne session ou un ancien cookie remember-me doit être redirigé vers
+  `/login` ou `/admin/login`.
+- Une nouvelle connexion doit fonctionner pour un compte actif et rouvrir une
+  session portant la nouvelle génération.
 
 ## 7. Vérifications avant mise en service
 
+- Appliquer les migrations de sécurité **avant** les migrations métier sans
+  rapport, afin que le code ne tourne jamais sans `authentication_state` ni
+  `users.session_version` :
+
+  ```bash
+  php artisan migrate --path=database/migrations/2026_10_27_000007_create_authentication_state_table.php --force
+  php artisan migrate --path=database/migrations/2026_11_02_000001_add_session_version_to_users_table.php --force
+  ```
+
+  Ces migrations sont additives et ne modifient aucune donnée existante.
+  `2026_10_27_000007` est volontairement antérieure aux migrations de feuilles
+  de temps ; `2026_11_02_000001` doit être appliquée explicitement si l'ordre
+  global des fichiers la placerait après elles.
 - `php artisan migrate --pretend` relu, puis migration contrôlée.
 - `php artisan planning:audit:verify` sur une base vierge puis après tests.
 - `php artisan test`, `composer lint:check`, `composer types:check` verts.

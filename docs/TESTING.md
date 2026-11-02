@@ -42,9 +42,11 @@ Les tests automatisés utilisent une base MySQL dédiée et jetable, `planning_c
 - `tests/Feature/Access/AccountLifecycleTest.php` : amorçage CLI, activation à
   usage unique et expirée, changement de rôle, désactivation, révocation de
   session, protection du dernier Bureau.
-- `tests/Feature/Access/SessionRevocationTest.php` : connexion et table de
-  session configurées, échec propagé sans audit mensonger, révocation globale,
-  rejet d'une session antérieure après réactivation, recalcul des permissions.
+- `tests/Feature/Access/SessionRevocationTest.php` : révocation individuelle et
+  globale, génération globale, remember-me réellement rejoué, pilotes `file` et
+  `database`, connexion dédiée, panne du nettoyage physique sans perte de
+  sécurité, sessions Filament et Livewire, marqueurs absents/invalides,
+  concurrence login/révocation et recalcul des permissions.
 - `tests/Feature/Audit/AuditLogTest.php` : chaîne, séquence, clé d’audit dédiée,
   rotation de clé, événements historiques `APP_KEY`, expurgation, détection
   d’une signature invalide et commande de vérification.
@@ -55,6 +57,9 @@ testée en insérant directement un événement dont la signature est invalide.
 
 Résultats de référence du lot 2 : 45 tests, 304 assertions, Pint et Larastan
 verts.
+
+Résultats PC1-12 (02/11/2026) : 611 tests pertinents exécutés (610 réussis,
+1 ignoré, 3228 assertions), Pint et PHPStan verts sur le périmètre modifié.
 
 ## Couverture du lot 3 (26/10/2026)
 

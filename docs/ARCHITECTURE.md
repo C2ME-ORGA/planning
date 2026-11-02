@@ -47,13 +47,23 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     d'activation à usage unique (`AccountActivation`, contrôleur dédié),
     désactivation avec révocation des sessions (`SessionRevoker`), réinitialisation
     de la 2FA en CLI. Aucune suppression physique.
--   **Révocation** : `SessionRevoker` supprime les lignes sur la connexion et
-    la table configurées (`session.connection`, `session.table`) et renouvelle
-    `remember_token`. Pour les pilotes autres que `database`, cette suppression
-    n'est pas suffisante : `users.session_version` est incrémenté à chaque
-    révocation et `EnsureAccountIsActive` refuse toute session portant une
-    version antérieure. Une réactivation n'ouvre donc jamais l'accès à une
-    ancienne session, quel que soit le stockage.
+-   **Révocation individuelle** : `SessionRevoker` incrémente
+    `users.session_version` et renouvelle `remember_token` dans un même UPDATE
+    avant de tenter le nettoyage physique. Une panne de nettoyage ne remet pas
+    en cause l'invalidation logique ; elle est reportée dans l'audit.
+-   **Révocation globale** : `authentication_state.global_generation` est
+    incrémentée et tous les `remember_token` sont mis à `NULL` dans une même
+    transaction, sans charger les comptes en mémoire. Le nettoyage SQL des
+    sessions intervient ensuite et reste secondaire.
+-   **Contrôle des sessions** : `EnsureAccountIsActive` exige les marqueurs
+    `auth.session_version` et `auth.global_generation`. Il capture la génération
+    avant la résolution de l'utilisateur afin de détecter une révocation
+    concurrente, y compris pendant une authentification remember-me. Une
+    session sans marqueur est refusée.
+-   **Pilotes** : la suppression SQL cible `session.connection` /
+    `session.table` et n'est requise que pour le pilote `database`. Avec
+    `file`, `redis` ou un autre pilote, l'invalidation logique est la garantie ;
+    l'absence de table SQL n'empêche jamais la révocation.
 -   **Amorçage** : `planning:bootstrap-bureau` crée le premier Bureau/Direction,
     refuse si un tel compte existe déjà, puis se ferme. Aucune élévation de
     privilège par la CLI : chaque commande sensible exige `--actor` avec la
