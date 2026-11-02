@@ -195,12 +195,13 @@ pour un échec physique requis.
 - Une nouvelle connexion doit fonctionner pour un compte actif et rouvrir une
   session portant la nouvelle génération.
 
-### Retour arrière interdit sur `authentication_state`
+### Retour arrière interdit sur le schéma de sécurité
 
-La migration `authentication_state` refuse son `down()` : la suppression de la
-table réinitialiserait la génération globale et pourrait rendre valides des
-sessions d’une génération antérieure. Un retour arrière nécessite une
-intervention manuelle encadrée :
+Les migrations `authentication_state` et `users.session_version` refusent leur
+`down()` : supprimer la table réinitialiserait la génération globale et pourrait
+rendre valides des sessions d’une génération antérieure ; supprimer la colonne
+`session_version` désactiverait le contrôle de révocation individuelle. Un
+retour arrière nécessite une intervention manuelle encadrée :
 
 1. arrêter le code PC1-12 ou maintenir le contrôle de génération actif ;
 2. révoquer toutes les sessions et tous les jetons remember-me ;
