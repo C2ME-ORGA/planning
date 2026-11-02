@@ -1,13 +1,13 @@
 <?php
 
-namespace App\\Console\\Commands;
+namespace App\Console\Commands;
 
-use App\\Console\\Commands\\Concerns\\ResolvesCliActor;
-use App\\Enums\\Permission;
-use App\\Enums\\Role;
-use App\\Models\\User;
-use App\\Services\\Accounts\\AccountProvisioner;
-use Illuminate\\Console\\Command;
+use App\Console\Commands\Concerns\ResolvesCliActor;
+use App\Enums\Permission;
+use App\Enums\Role;
+use App\Models\User;
+use App\Services\Accounts\AccountProvisioner;
+use Illuminate\Console\Command;
 use Throwable;
 
 /**
