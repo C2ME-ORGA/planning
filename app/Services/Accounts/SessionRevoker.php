@@ -2,6 +2,7 @@
 
 namespace App\Services\Accounts;
 
+use App\Exceptions\PartialSessionRevocationException;
 use App\Models\User;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
@@ -70,9 +71,34 @@ class SessionRevoker
         // Même limite que revoke() : deux connexions ne partagent pas une
         // transaction SQL. Les sessions sont supprimées d'abord.
         $deleted = $connection->transaction($deleteSessions);
-        DB::transaction(fn () => $this->rotateAllRememberTokens());
+
+        try {
+            DB::transaction(fn () => $this->rotateAllRememberTokens());
+        } catch (Throwable $exception) {
+            throw new PartialSessionRevocationException(
+                sessionsDeleted: $deleted > 0,
+                rememberTokensRotated: false,
+                auditRecorded: false,
+                previous: $exception,
+            );
+        }
 
         return $deleted;
+    }
+
+    /**
+     * Indique si les sessions utilisent une connexion distincte de la
+     * connexion par défaut.
+     */
+    public function usesDistinctConnection(): bool
+    {
+        $configured = config('session.connection');
+
+        if (! is_string($configured) || trim($configured) === '') {
+            return false;
+        }
+
+        return trim($configured) !== DB::getDefaultConnection();
     }
 
     /**

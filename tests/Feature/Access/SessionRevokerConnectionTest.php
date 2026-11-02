@@ -3,7 +3,9 @@
 use App\Enums\AuditAction;
 use App\Models\User;
 use App\Services\Accounts\SessionRevoker;
+use App\Services\Audit\AuditLogger;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -247,9 +249,11 @@ it('fails emergency lockdown for an unknown session connection without audit suc
     $user = User::factory()->bureauDirection()->create();
     insertSessionOn('mysql', $user, 'default-emergency-unknown');
 
-    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])
-        ->expectsOutputToContain('indisponible ou inconnue')
-        ->assertExitCode(1);
+    expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+    $output = Artisan::output();
+
+    expect($output)->toContain('Opération non exécutée')
+        ->and($output)->toContain('indisponible ou inconnue');
 
     expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
 
@@ -267,11 +271,84 @@ it('fails emergency lockdown when the dedicated session table is absent', functi
         $user = User::factory()->bureauDirection()->create();
         insertSessionOn('mysql', $user, 'default-emergency-absent-table');
 
-        $this->artisan('planning:emergency-lockdown', ['--confirm' => true])
-            ->expectsOutputToContain('absente ou incomplète')
-            ->assertExitCode(1);
+        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+        $output = Artisan::output();
+
+        expect($output)->toContain('Opération non exécutée')
+            ->and($output)->toContain('absente ou incomplète');
 
         expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
+
+        $this->assertDatabaseMissing('audit_events', [
+            'action' => AuditAction::EmergencyLockdown->value,
+        ]);
+    } finally {
+        dropDedicatedSessionDatabase($database);
+    }
+});
+
+it('reports a partial revocation when audit fails after dedicated session deletion', function () {
+    $database = createDedicatedSessionDatabase();
+
+    try {
+        createDedicatedSessionsTable();
+        config(['session.connection' => 'sessions', 'session.table' => 'sessions']);
+
+        $user = User::factory()->bureauDirection()->create();
+        $initialToken = $user->remember_token;
+        insertSessionOn('mysql', $user, 'default-audit-partial');
+        insertSessionOn('sessions', $user, 'dedicated-audit-partial');
+
+        $audit = Mockery::mock(AuditLogger::class);
+        $audit->shouldReceive('assertConfigured')->once();
+        $audit->shouldReceive('record')->once()->andThrow(new RuntimeException('Échec d’audit simulé.'));
+        app()->instance(AuditLogger::class, $audit);
+
+        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+        $output = Artisan::output();
+
+        expect($output)->toContain('Révocation partielle')
+            ->and($output)->toContain('remember tokens');
+
+        expect(DB::connection('sessions')->table('sessions')->where('user_id', $user->id)->count())->toBe(0)
+            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
+            ->and($user->fresh()->remember_token)->toBe($initialToken);
+
+        $this->assertDatabaseMissing('audit_events', [
+            'action' => AuditAction::EmergencyLockdown->value,
+        ]);
+    } finally {
+        dropDedicatedSessionDatabase($database);
+    }
+});
+
+it('reports a partial revocation when remember token rotation fails after dedicated deletion', function () {
+    $database = createDedicatedSessionDatabase();
+
+    try {
+        createDedicatedSessionsTable();
+        config(['session.connection' => 'sessions', 'session.table' => 'sessions']);
+
+        $user = User::factory()->bureauDirection()->create();
+        $initialToken = $user->remember_token;
+        insertSessionOn('mysql', $user, 'default-token-partial');
+        insertSessionOn('sessions', $user, 'dedicated-token-partial');
+
+        DB::connection()->beforeExecuting(function (string $query): void {
+            if (str_contains($query, 'update `users`')) {
+                throw new RuntimeException('Échec simulé du renouvellement des remember tokens.');
+            }
+        });
+
+        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+        $output = Artisan::output();
+
+        expect($output)->toContain('Révocation partielle')
+            ->and($output)->toContain('remember tokens');
+
+        expect(DB::connection('sessions')->table('sessions')->where('user_id', $user->id)->count())->toBe(0)
+            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
+            ->and($user->fresh()->remember_token)->toBe($initialToken);
 
         $this->assertDatabaseMissing('audit_events', [
             'action' => AuditAction::EmergencyLockdown->value,

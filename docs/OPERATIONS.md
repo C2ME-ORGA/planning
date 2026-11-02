@@ -213,6 +213,30 @@ est validée sur cette connexion et ne peut pas être annulée par le rollback d
 la transaction d'audit de la connexion par défaut. La commande ne doit jamais
 annoncer une révocation réussie si elle a échoué.
 
+Messages de retour :
+
+- `Configuration d’audit invalide` : aucune action n’a été exécutée.
+- `Opération non exécutée : aucune session n’a été supprimée` : échec avant
+  mutation, notamment pilote, connexion, table ou colonnes invalides.
+- `Révocation annulée : aucune session n’a été supprimée` : échec avec rollback
+  sur la connexion par défaut.
+- `Révocation partielle` : des sessions ont été supprimées sur une connexion
+  distincte, mais une étape ultérieure a échoué. Une vérification opérationnelle
+  est obligatoire.
+
+Procédure de diagnostic après une `Révocation partielle` :
+
+1. Identifier la connexion utilisée (`SESSION_CONNECTION` ou connexion par
+   défaut).
+2. Vérifier la présence de la table de sessions et des colonnes `id`/`user_id`
+   sur cette connexion.
+3. Compter les sessions restantes sur la connexion de sessions.
+4. Vérifier les `remember_token` des comptes concernés.
+5. Vérifier la présence de l’événement `EmergencyLockdown` dans le journal
+   d’audit.
+6. Consigner le résultat, ne pas relancer aveuglément, et déclencher une
+   intervention si les sessions ou les jetons ne sont pas dans l’état attendu.
+
 ## 7. Vérifications avant mise en service
 
 - `php artisan migrate --pretend` relu, puis migration contrôlée.

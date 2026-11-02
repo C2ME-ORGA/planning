@@ -637,7 +637,9 @@ it('refuses emergency lockdown when the audit configuration is invalid', functio
     insertSessionFor($user, 'session-invalid-audit');
     config(['planning.audit.key' => 'trop-court']);
 
-    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])->assertExitCode(1);
+    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])
+        ->expectsOutputToContain('Configuration d’audit invalide')
+        ->assertExitCode(1);
 
     expect(DB::table('sessions')->count())->toBe(1);
 
@@ -675,7 +677,9 @@ it('rolls back emergency lockdown when the audit write fails', function () {
     $audit->shouldReceive('record')->once()->andThrow(new RuntimeException('Échec d’audit simulé.'));
     app()->instance(AuditLogger::class, $audit);
 
-    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])->assertExitCode(1);
+    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])
+        ->expectsOutputToContain('Révocation annulée')
+        ->assertExitCode(1);
 
     expect(DB::table('sessions')->count())->toBe(1)
         ->and($user->fresh()->remember_token)->toBe($initialToken);

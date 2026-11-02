@@ -93,5 +93,14 @@ testée en insérant directement un événement dont la signature est invalide.
 - La suite complète s’exécute sur MySQL. Aucun test de révocation n’est
   exécuté sur SQLite.
 
-Résultats de référence du lot 2 après durcissement : 95 tests, 482 assertions,
-Pint et Larastan verts.
+Résultats de référence du lot 2 avant la correction ciblée du retour Emergency
+Lockdown : 95 tests, 482 assertions, Pint et Larastan verts.
+
+La correction ciblée ajoute deux tests dans
+`tests/Feature/Access/SessionRevokerConnectionTest.php` : échec d’audit après
+suppression sur connexion dédiée et échec du renouvellement des remember tokens
+après suppression dédiée. Conformément à la consigne de validation
+proportionnée, la suite complète n’a pas été relancée pour ce changement
+circonscrit à `EmergencyLockdownCommand` et `SessionRevoker::revokeAll()` ; les
+tests ciblés de ce fichier et de `AccountLifecycleTest` couvrent les scénarios
+concernés.
