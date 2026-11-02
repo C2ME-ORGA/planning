@@ -27,12 +27,99 @@
         </div>
     @endif
 
+    <x-duration-warnings :warnings="$durationWarnings" :summary="$summary" />
+
     <div class="grid gap-6 lg:grid-cols-3">
         <section aria-labelledby="segments-heading" class="space-y-3 lg:col-span-2">
             <div class="flex flex-wrap items-center justify-between gap-2">
                 <h2 id="segments-heading" class="text-base font-semibold">Segments</h2>
-                <p class="text-xs text-stone-500">{{ $timesheet->segments->count() }} segment(s)</p>
+                <div class="flex items-center gap-2">
+                    <p class="text-xs text-stone-500">{{ $timesheet->segments->count() }} segment(s)</p>
+                    @if ($canEditBureauSegments)
+                        <button type="button" wire:click="startAddingSegment" class="inline-flex min-h-11 items-center rounded-lg bg-violet-700 px-3 text-sm font-semibold text-white hover:bg-violet-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-600 focus-visible:ring-offset-2">
+                            Ajouter un segment
+                        </button>
+                    @endif
+                </div>
             </div>
+
+            @if ($canEditBureauSegments && $segmentFormVisible)
+                <form wire:submit.prevent="saveSegment" class="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm" aria-labelledby="bureau-segment-form-title">
+                    <h3 id="bureau-segment-form-title" class="font-semibold text-violet-950">
+                        {{ $editingSegmentId === null ? 'Ajouter un segment' : 'Modifier le segment' }}
+                    </h3>
+
+                    <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div>
+                            <label for="bureau-segment-category" class="mb-1 block text-xs font-medium text-stone-700">Catégorie</label>
+                            <select id="bureau-segment-category" wire:model="segmentCategory" class="min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm focus:border-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-200">
+                                @foreach (\App\Enums\TimeCategory::options() as $value => $label)
+                                    <option value="{{ $value }}">{{ $label }}</option>
+                                @endforeach
+                            </select>
+                            @error('segmentCategory') <p class="mt-1 text-sm text-rose-700" role="alert">{{ $message }}</p> @enderror
+                        </div>
+
+                        <div>
+                            <label for="bureau-segment-start-date" class="mb-1 block text-xs font-medium text-stone-700">Date de début</label>
+                            <input id="bureau-segment-start-date" type="date" wire:model="segmentStartDate" class="min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm focus:border-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-200">
+                            @error('segmentStartDate') <p class="mt-1 text-sm text-rose-700" role="alert">{{ $message }}</p> @enderror
+                        </div>
+
+                        <div>
+                            <label for="bureau-segment-start-time" class="mb-1 block text-xs font-medium text-stone-700">Heure de début</label>
+                            <input id="bureau-segment-start-time" type="time" wire:model="segmentStartTime" class="min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm focus:border-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-200">
+                            @error('segmentStartTime') <p class="mt-1 text-sm text-rose-700" role="alert">{{ $message }}</p> @enderror
+                        </div>
+
+                        <div>
+                            <label for="bureau-segment-end-date" class="mb-1 block text-xs font-medium text-stone-700">Date de fin</label>
+                            <input id="bureau-segment-end-date" type="date" wire:model="segmentEndDate" class="min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm focus:border-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-200">
+                            @error('segmentEndDate') <p class="mt-1 text-sm text-rose-700" role="alert">{{ $message }}</p> @enderror
+                        </div>
+
+                        <div>
+                            <label for="bureau-segment-end-time" class="mb-1 block text-xs font-medium text-stone-700">Heure de fin</label>
+                            <input id="bureau-segment-end-time" type="time" wire:model="segmentEndTime" class="min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm focus:border-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-200">
+                            @error('segmentEndTime') <p class="mt-1 text-sm text-rose-700" role="alert">{{ $message }}</p> @enderror
+                        </div>
+                    </div>
+
+                    <details class="mt-3 rounded-lg bg-white/60 p-3">
+                        <summary class="min-h-11 cursor-pointer text-xs font-semibold text-stone-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-600">Cas particulier : changement d’heure</summary>
+                        <p class="mt-2 text-xs text-stone-600">À l’heure d’hiver, une heure locale peut être ambiguë. Indiquez l’offset uniquement dans ce cas.</p>
+                        <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                            <div>
+                                <label for="bureau-segment-start-offset" class="mb-1 block text-xs font-medium text-stone-700">Offset de début (minutes)</label>
+                                <select id="bureau-segment-start-offset" wire:model="segmentStartOffsetMinutes" class="min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm focus:border-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-200">
+                                    <option value="">Automatique</option>
+                                    <option value="60">+60 (heure d’hiver)</option>
+                                    <option value="120">+120 (heure d’été)</option>
+                                </select>
+                                @error('segmentStartOffsetMinutes') <p class="mt-1 text-sm text-rose-700" role="alert">{{ $message }}</p> @enderror
+                            </div>
+                            <div>
+                                <label for="bureau-segment-end-offset" class="mb-1 block text-xs font-medium text-stone-700">Offset de fin (minutes)</label>
+                                <select id="bureau-segment-end-offset" wire:model="segmentEndOffsetMinutes" class="min-h-11 w-full rounded-lg border border-stone-300 bg-white px-3 text-sm focus:border-violet-600 focus:outline-none focus:ring-2 focus:ring-violet-200">
+                                    <option value="">Automatique</option>
+                                    <option value="60">+60 (heure d’hiver)</option>
+                                    <option value="120">+120 (heure d’été)</option>
+                                </select>
+                                @error('segmentEndOffsetMinutes') <p class="mt-1 text-sm text-rose-700" role="alert">{{ $message }}</p> @enderror
+                            </div>
+                        </div>
+                    </details>
+
+                    <div class="mt-3 flex flex-wrap gap-2">
+                        <button type="submit" class="inline-flex min-h-11 items-center rounded-lg bg-violet-700 px-4 text-sm font-semibold text-white hover:bg-violet-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-600 focus-visible:ring-offset-2">
+                            Enregistrer la correction
+                        </button>
+                        <button type="button" wire:click="cancelSegmentEdit" class="inline-flex min-h-11 items-center rounded-lg border border-stone-300 bg-white px-4 text-sm font-medium text-stone-700 hover:bg-stone-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-600 focus-visible:ring-offset-2">
+                            Annuler
+                        </button>
+                    </div>
+                </form>
+            @endif
 
             @php
                 $overlapSegmentIds = collect($overlaps)
@@ -64,6 +151,16 @@
                             @if (in_array((int) $segment->getKey(), $overlapSegmentIds, true))
                                 <span class="mt-2 inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 ring-1 ring-inset ring-amber-200">Chevauchement</span>
                             @endif
+                            @if ($canEditBureauSegments)
+                                <div class="mt-2 flex flex-wrap gap-2">
+                                    <button type="button" wire:click="editSegment({{ $segment->getKey() }})" class="inline-flex min-h-11 items-center rounded-lg border border-violet-300 bg-violet-50 px-3 text-xs font-semibold text-violet-900 hover:bg-violet-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-600">
+                                        Modifier
+                                    </button>
+                                    <button type="button" wire:click="deleteSegment({{ $segment->getKey() }})" wire:confirm="Supprimer ce segment ?" class="inline-flex min-h-11 items-center rounded-lg border border-rose-300 bg-rose-50 px-3 text-xs font-semibold text-rose-900 hover:bg-rose-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-600">
+                                        Supprimer
+                                    </button>
+                                </div>
+                            @endif
                         </li>
                     @endforeach
                 </ul>
@@ -78,6 +175,9 @@
                                     <th scope="col" class="px-4 py-3 font-medium">Fin</th>
                                     <th scope="col" class="px-4 py-3 font-medium">Durée</th>
                                     <th scope="col" class="px-4 py-3 font-medium">Alerte</th>
+                                    @if ($canEditBureauSegments)
+                                        <th scope="col" class="px-4 py-3 font-medium">Actions</th>
+                                    @endif
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-stone-100 bg-white">
@@ -98,6 +198,18 @@
                                                 <span class="text-xs text-stone-400">—</span>
                                             @endif
                                         </td>
+                                        @if ($canEditBureauSegments)
+                                            <td class="px-4 py-3">
+                                                <div class="flex flex-wrap gap-2">
+                                                    <button type="button" wire:click="editSegment({{ $segment->getKey() }})" class="inline-flex min-h-11 items-center rounded-lg border border-violet-300 bg-violet-50 px-3 text-xs font-semibold text-violet-900 hover:bg-violet-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-600">
+                                                        Modifier
+                                                    </button>
+                                                    <button type="button" wire:click="deleteSegment({{ $segment->getKey() }})" wire:confirm="Supprimer ce segment ?" class="inline-flex min-h-11 items-center rounded-lg border border-rose-300 bg-rose-50 px-3 text-xs font-semibold text-rose-900 hover:bg-rose-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-600">
+                                                        Supprimer
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        @endif
                                     </tr>
                                 @endforeach
                             </tbody>
@@ -152,6 +264,20 @@
                         </form>
                     @endif
 
+                    @if ($canSendToValidation)
+                        <form wire:submit.prevent="sendToValidation" class="space-y-2 border-t border-stone-100 pt-4">
+                            <label for="direct-reason" class="block text-sm font-medium text-stone-700">Transmettre directement à la validation</label>
+                            <p class="text-xs text-stone-500">
+                                Correction Bureau/Direction : le relevé passe en « Prête pour validation » sans transmission préalable du salarié. Le validateur final doit rester indépendant.
+                            </p>
+                            <textarea id="direct-reason" wire:model="directReason" rows="3" class="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm focus:border-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-200" placeholder="Motif obligatoire (10 caractères minimum)"></textarea>
+                            @error('directReason') <p class="text-sm text-rose-700" role="alert">{{ $message }}</p> @enderror
+                            <button type="submit" wire:confirm="Transmettre ce relevé corrigé à la validation finale ?" class="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-violet-700 px-4 text-sm font-semibold text-white hover:bg-violet-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-600 focus-visible:ring-offset-2">
+                                Transmettre à la validation
+                            </button>
+                        </form>
+                    @endif
+
                     @if ($canValidate)
                         <form wire:submit.prevent="validateTimesheet" class="space-y-2 border-t border-stone-100 pt-4">
                             <p class="text-sm font-medium text-stone-700">Validation finale</p>
@@ -181,7 +307,7 @@
                         </form>
                     @endif
 
-                    @if (! $canSubmit && ! $canResume && ! $canReturn && ! $canMarkReady && ! $canValidate && ! $canReopen)
+                    @if (! $canSubmit && ! $canResume && ! $canReturn && ! $canMarkReady && ! $canSendToValidation && ! $canValidate && ! $canReopen)
                         <p class="text-sm text-stone-500">Aucune action disponible pour votre rôle sur ce statut.</p>
                     @endif
                 </div>

@@ -343,6 +343,30 @@ it('records a rejected decision as a distinct audit event', function (): void {
             ->count())->toBe(0);
 });
 
+it('rolls back the overlap review when the audit fails', function (): void {
+    $timesheet = pc132ReviewableTimesheet($this->owner, $this->ownerUser, $this->chefUser);
+    [$first, $second] = pc132AddOverlap($timesheet);
+
+    config(['planning.audit.key' => 'trop-court']);
+
+    expect(fn () => $this->reviews->review(
+        $timesheet,
+        $first->id,
+        $second->id,
+        OverlapReviewDecision::Accepted,
+        'Déplacement justifié par le chantier.',
+        $this->bureau,
+    ))->toThrow(RuntimeException::class, 'PLANNING_AUDIT_KEY');
+
+    expect(TimesheetOverlapReview::query()->count())->toBe(0)
+        ->and(AuditEvent::query()
+            ->whereIn('action', [
+                AuditAction::TimesheetOverlapReviewAccepted->value,
+                AuditAction::TimesheetOverlapReviewRejected->value,
+            ])
+            ->count())->toBe(0);
+});
+
 it('refuses every invalid review reason without side effects', function (): void {
     $timesheet = pc132ReviewableTimesheet($this->owner, $this->ownerUser, $this->chefUser);
     [$first, $second] = pc132AddOverlap($timesheet);
@@ -455,9 +479,11 @@ it('blocks validation when a segment changed after the review', function (): voi
         $this->bureau,
     );
 
-    $second->update([
-        'start_at' => pc132OverlapInstant('2026-11-02 11:30:00'),
-        'end_at' => pc132OverlapInstant('2026-11-02 13:30:00'),
+    // Modification hors modèle (import ou correction directe en base) : elle
+    // doit invalider l'empreinte sans passer par le service de saisie.
+    DB::table('timesheet_segments')->where('id', $second->getKey())->update([
+        'start_at' => pc132OverlapInstant('2026-11-02 11:30:00')->utc()->format('Y-m-d H:i:s'),
+        'end_at' => pc132OverlapInstant('2026-11-02 13:30:00')->utc()->format('Y-m-d H:i:s'),
     ]);
 
     expect(fn (): Timesheet => $this->validation->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau))
@@ -465,6 +491,43 @@ it('blocks validation when a segment changed after the review', function (): voi
 
     expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
         ->and(AuditEvent::query()->where('action', AuditAction::TimesheetValidated->value)->count())->toBe(0);
+});
+
+it('still requires an overlap review before validating a direct Bureau transmission', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner);
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    [$first, $second] = pc132AddOverlap($timesheet);
+
+    $this->segments->update(
+        $second,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => pc132OverlapInstant('2026-11-02 11:00:00'),
+            'end_at' => pc132OverlapInstant('2026-11-02 13:30:00'),
+        ],
+        $this->bureau,
+    );
+
+    $this->controls->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    );
+
+    expect(fn (): Timesheet => $this->validation->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau))
+        ->toThrow(ValidationException::class, 'non examiné');
+
+    $this->reviews->review(
+        $timesheet,
+        $first->id,
+        $second->id,
+        OverlapReviewDecision::Accepted,
+        'Chevauchement justifié par le chantier.',
+        $this->bureau,
+    );
+
+    expect($this->validation->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau)->status)
+        ->toBe(TimesheetStatus::Validee);
 });
 
 it('requires a new review after a correction cycle even when segments are unchanged', function (): void {

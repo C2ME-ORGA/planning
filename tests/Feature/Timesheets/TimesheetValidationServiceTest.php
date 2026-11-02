@@ -9,6 +9,7 @@ use App\Models\Employee;
 use App\Models\Timesheet;
 use App\Models\User;
 use App\Services\Timesheets\TimesheetControlService;
+use App\Services\Timesheets\TimesheetHistory;
 use App\Services\Timesheets\TimesheetSegmentService;
 use App\Services\Timesheets\TimesheetService;
 use App\Services\Timesheets\TimesheetSubmissionService;
@@ -322,6 +323,17 @@ it('validates a new cycle after a reopening', function (): void {
             ->where('action', AuditAction::TimesheetReopened->value)
             ->where('subject_id', (string) $timesheet->getKey())
             ->count())->toBe(1);
+
+    $events = app(TimesheetHistory::class)->eventsFor($timesheet->fresh() ?? $timesheet);
+    $sequences = $events->pluck('sequence')->all();
+    $firstValidation = $events->firstWhere('action', AuditAction::TimesheetValidated);
+    $reopening = $events->firstWhere('action', AuditAction::TimesheetReopened);
+
+    expect($sequences)->toBe(collect($sequences)->sort()->values()->all())
+        ->and($firstValidation?->sequence)->toBeLessThan($reopening?->sequence)
+        ->and($events->where('action', AuditAction::TimesheetValidated)->count())->toBe(2)
+        ->and($events->where('action', AuditAction::TimesheetSubmitted)->count())->toBe(2)
+        ->and($events->where('action', AuditAction::TimesheetCreated)->count())->toBe(1);
 });
 
 it('validates after a return to correction and a resume', function (): void {
@@ -656,4 +668,193 @@ it('refuses self-validation by an inactive Bureau owner', function (): void {
 
     expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
         ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)->count())->toBe(0);
+});
+
+it('validates a Bureau-corrected draft sent directly to final validation', function (): void {
+    $timesheet = app(TimesheetService::class)->openFor($this->owner, '2026-11-02', $this->ownerUser);
+
+    app(TimesheetSegmentService::class)->add(
+        $timesheet,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 08:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 12:00', 'Europe/Paris'),
+        ],
+        $this->ownerUser,
+    );
+
+    $segment = $timesheet->segments()->firstOrFail();
+    $this->segments->update(
+        $segment,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 09:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 13:00', 'Europe/Paris'),
+        ],
+        $this->bureau,
+    );
+
+    $this->controls->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    );
+
+    $validated = $this->service->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau);
+
+    expect($validated->status)->toBe(TimesheetStatus::Validee)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetSentToValidation->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->where('actor_id', $this->bureau->getKey())
+            ->exists())->toBeTrue()
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetValidated->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->where('actor_id', $this->secondBureau->getKey())
+            ->exists())->toBeTrue();
+});
+
+it('refuses validation by the Bureau who sent the correction directly', function (): void {
+    $timesheet = app(TimesheetService::class)->openFor($this->owner, '2026-11-02', $this->ownerUser);
+
+    app(TimesheetSegmentService::class)->add(
+        $timesheet,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 08:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 12:00', 'Europe/Paris'),
+        ],
+        $this->ownerUser,
+    );
+
+    $segment = $timesheet->segments()->firstOrFail();
+    $this->segments->update(
+        $segment,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 09:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 13:00', 'Europe/Paris'),
+        ],
+        $this->bureau,
+    );
+
+    $this->controls->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    );
+
+    expect(fn (): Timesheet => $this->service->validate($timesheet->fresh() ?? $timesheet, $this->bureau))
+        ->toThrow(AuthorizationException::class);
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetValidated->value)->count())->toBe(0);
+});
+
+it('lets a Bureau owner self-validate a directly transmitted draft with a reason', function (): void {
+    $bureauEmployee = TimesheetFixtures::employee($this->bureau);
+    $timesheet = app(TimesheetService::class)->openFor($bureauEmployee, '2026-11-02', $this->bureau);
+
+    app(TimesheetSegmentService::class)->add(
+        $timesheet,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 08:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 12:00', 'Europe/Paris'),
+        ],
+        $this->bureau,
+    );
+
+    $this->controls->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    );
+
+    expect(fn (): Timesheet => $this->service->validate($timesheet->fresh() ?? $timesheet, $this->bureau))
+        ->toThrow(AuthorizationException::class);
+
+    $validated = $this->service->validate(
+        $timesheet->fresh() ?? $timesheet,
+        $this->bureau,
+        'Auto-validation motivée après correction directe.',
+    );
+
+    expect($validated->status)->toBe(TimesheetStatus::Validee)
+        ->and(AuditEvent::query()->where('action', AuditAction::SelfApprovalRecorded->value)->count())->toBe(1)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetValidated->value)->count())->toBe(1);
+});
+
+it('validates a direct Bureau correction in a new cycle after reopening', function (): void {
+    $timesheet = pc132CompleteTrail($this->owner, $this->ownerUser, $this->chefUser);
+
+    $this->service->validate($timesheet, $this->secondBureau);
+    $this->service->reopen($timesheet->fresh() ?? $timesheet, 'Réouverture demandée', $this->secondBureau);
+
+    app(TimesheetSegmentService::class)->add(
+        $timesheet->fresh() ?? $timesheet,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-03 08:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-03 12:00', 'Europe/Paris'),
+        ],
+        $this->ownerUser,
+    );
+
+    $segment = ($timesheet->fresh() ?? $timesheet)->segments()->firstOrFail();
+    $this->segments->update(
+        $segment,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-03 09:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-03 13:00', 'Europe/Paris'),
+        ],
+        $this->bureau,
+    );
+
+    $this->controls->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction après réouverture.',
+        $this->bureau,
+    );
+
+    $validated = $this->service->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau);
+
+    expect($validated->status)->toBe(TimesheetStatus::Validee);
+});
+
+it('lets the Bureau resume a correction, fix it and send it directly to validation', function (): void {
+    $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::AControler);
+    TimesheetFixtures::segment($timesheet);
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetCreated, $this->ownerUser);
+    TimesheetFixtures::audit($timesheet, AuditAction::TimesheetSubmitted, $this->ownerUser);
+
+    $this->controls->requestCorrection(
+        $timesheet,
+        'Correction demandée par le contrôle.',
+        $this->chefUser,
+    );
+    $this->controls->resumeCorrection($timesheet->fresh() ?? $timesheet, $this->bureau);
+
+    $segment = $timesheet->segments()->firstOrFail();
+    $this->segments->update(
+        $segment,
+        [
+            'category' => TimeCategory::TravailEffectif,
+            'start_at' => CarbonImmutable::parse('2026-11-02 09:00', 'Europe/Paris'),
+            'end_at' => CarbonImmutable::parse('2026-11-02 13:00', 'Europe/Paris'),
+        ],
+        $this->bureau,
+    );
+
+    $this->controls->sendToValidation(
+        $timesheet->fresh() ?? $timesheet,
+        'Correction effectuée par le Bureau.',
+        $this->bureau,
+    );
+
+    $validated = $this->service->validate($timesheet->fresh() ?? $timesheet, $this->secondBureau);
+
+    expect($validated->status)->toBe(TimesheetStatus::Validee);
 });

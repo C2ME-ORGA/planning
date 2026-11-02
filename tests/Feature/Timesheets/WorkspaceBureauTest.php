@@ -287,6 +287,129 @@ it('runs a batch through the existing service and displays a partial outcome', f
         ->and($component->get('results')['partial'])->toBeTrue();
 });
 
+it('sends a Bureau-corrected draft directly to validation with a mandatory reason', function (): void {
+    [$bureau, , , , , $owner] = workspaceBureauContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    $segment = TimesheetFixtures::segment($timesheet);
+
+    $this->actingAs($bureau);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertSee('Ajouter un segment')
+        ->assertDontSee('Transmettre directement à la validation')
+        ->call('editSegment', $segment->getKey())
+        ->set('segmentStartTime', '09:00')
+        ->set('segmentEndTime', '13:00')
+        ->call('saveSegment')
+        ->assertHasNoErrors()
+        ->assertSee('Segment modifié.')
+        ->assertSee('Transmettre directement à la validation')
+        ->set('directReason', 'Correction effectuée par le Bureau.')
+        ->call('sendToValidation')
+        ->assertHasNoErrors()
+        ->assertSee('Relevé transmis directement à la validation');
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetSentToValidation->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->where('actor_id', $bureau->getKey())
+            ->exists())->toBeTrue()
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetUpdated->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->where('actor_id', $bureau->getKey())
+            ->exists())->toBeTrue();
+
+    $event = AuditEvent::query()
+        ->where('action', AuditAction::TimesheetUpdated->value)
+        ->where('subject_id', (string) $timesheet->getKey())
+        ->where('changes->operation', 'segment_updated')
+        ->firstOrFail();
+
+    expect($event->changes['before']['end_at'] ?? null)->toBe('2026-11-02T11:00:00+00:00')
+        ->and($event->changes['after']['end_at'] ?? null)->toBe('2026-11-02T12:00:00+00:00');
+});
+
+it('refuses direct transmission without an effective Bureau correction', function (): void {
+    [$bureau, , , , , $owner] = workspaceBureauContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    TimesheetFixtures::segment($timesheet);
+
+    $this->actingAs($bureau);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->set('directReason', 'Correction effectuée par le Bureau.')
+        ->call('sendToValidation')
+        ->assertHasErrors('timesheet');
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('lets the Bureau add and delete segments on another employee draft with audit', function (): void {
+    [$bureau, , , , , $owner] = workspaceBureauContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    $existing = TimesheetFixtures::segment($timesheet);
+
+    $this->actingAs($bureau);
+
+    $component = Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->call('startAddingSegment')
+        ->assertSet('segmentFormVisible', true)
+        ->set('segmentStartDate', '2026-11-02')
+        ->set('segmentEndDate', '2026-11-02')
+        ->set('segmentStartTime', '14:00')
+        ->set('segmentEndTime', '16:00')
+        ->set('segmentCategory', 'travail_effectif')
+        ->call('saveSegment')
+        ->assertHasNoErrors()
+        ->assertSee('Segment ajouté.');
+
+    $added = $timesheet->segments()->where('id', '!=', $existing->getKey())->firstOrFail();
+
+    expect($timesheet->segments()->count())->toBe(2)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetUpdated->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->where('actor_id', $bureau->getKey())
+            ->where('changes->operation', 'segment_added')
+            ->exists())->toBeTrue();
+
+    $component
+        ->call('deleteSegment', $added->getKey())
+        ->assertHasNoErrors()
+        ->assertSee('Segment supprimé.');
+
+    expect($timesheet->segments()->count())->toBe(1)
+        ->and(AuditEvent::query()
+            ->where('action', AuditAction::TimesheetUpdated->value)
+            ->where('subject_id', (string) $timesheet->getKey())
+            ->where('actor_id', $bureau->getKey())
+            ->where('changes->operation', 'segment_deleted')
+            ->exists())->toBeTrue();
+});
+
+it('refuses Bureau segment correction on a locked timesheet', function (): void {
+    [$bureau, , , , , $owner] = workspaceBureauContext();
+    $timesheet = TimesheetFixtures::timesheet(
+        $owner,
+        week: '2026-11-02',
+        status: TimesheetStatus::AControler,
+    );
+    $segment = TimesheetFixtures::segment($timesheet);
+
+    $this->actingAs($bureau);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertDontSee('Ajouter un segment')
+        ->call('editSegment', $segment->getKey())
+        ->assertForbidden();
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::AControler)
+        ->and($timesheet->segments()->count())->toBe(1);
+});
+
 it('reopens a validated timesheet with a mandatory reason', function (): void {
     [$bureau, , , , , $owner] = workspaceBureauContext();
     $timesheet = TimesheetFixtures::timesheet(

@@ -158,6 +158,75 @@ it('requires a reason before marking a timesheet ready', function (): void {
     expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::PretePourValidation);
 });
 
+it('cannot send a draft directly to validation, even by calling the Livewire action', function (): void {
+    [$chefUser, , $ownerUser, $owner] = workspaceTeamContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-16');
+    TimesheetFixtures::segment(
+        $timesheet,
+        start: '2026-11-16 08:00:00',
+        end: '2026-11-16 12:00:00',
+    );
+
+    $this->actingAs($chefUser);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertDontSee('Transmettre directement à la validation')
+        ->set('directReason', 'Tentative de transmission directe.')
+        ->call('sendToValidation')
+        ->assertForbidden();
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('cannot use the Bureau segment correction interface on a team member draft', function (): void {
+    [$chefUser, , $ownerUser, $owner] = workspaceTeamContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-16');
+    $segment = TimesheetFixtures::segment(
+        $timesheet,
+        start: '2026-11-16 08:00:00',
+        end: '2026-11-16 12:00:00',
+    );
+
+    $this->actingAs($chefUser);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertDontSee('Ajouter un segment')
+        ->call('startAddingSegment')
+        ->assertForbidden();
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->call('editSegment', $segment->getKey())
+        ->assertForbidden();
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and($timesheet->segments()->count())->toBe(1);
+});
+
+it('cannot use the Bureau segment correction interface as a conducteur', function (): void {
+    $conducteurUser = TimesheetFixtures::user(Role::Conducteur);
+    $conducteur = TimesheetFixtures::employee($conducteurUser);
+    $ownerUser = TimesheetFixtures::user(Role::Ouvrier);
+    $owner = TimesheetFixtures::employee($ownerUser);
+    $team = TimesheetFixtures::team();
+    TimesheetFixtures::assign($owner, $team);
+    TimesheetFixtures::lead($conducteur, $team);
+
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-16');
+    TimesheetFixtures::segment(
+        $timesheet,
+        start: '2026-11-16 08:00:00',
+        end: '2026-11-16 12:00:00',
+    );
+
+    $this->actingAs($conducteurUser);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertDontSee('Ajouter un segment')
+        ->call('startAddingSegment')
+        ->assertForbidden();
+});
+
 it('cannot validate or review overlaps, even by calling the Livewire actions', function (): void {
     [$chefUser, , $ownerUser, $owner] = workspaceTeamContext();
     $ready = workspaceTeamTimesheet(

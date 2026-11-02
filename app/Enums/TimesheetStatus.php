@@ -36,7 +36,11 @@ enum TimesheetStatus: string
     public function allowedTransitions(): array
     {
         return match ($this) {
-            self::Brouillon => [self::AControler],
+            // Le Bureau/Direction peut corriger un brouillon et le transmettre
+            // directement à la validation finale, sans transmission préalable
+            // du salarié. Le salarié reste seul autorisé à transmettre vers le
+            // contrôle (`AControler`).
+            self::Brouillon => [self::AControler, self::PretePourValidation],
             self::AControler => [self::ACorriger, self::PretePourValidation],
             self::ACorriger => [self::Brouillon],
             self::PretePourValidation => [self::Validee],
@@ -74,12 +78,17 @@ enum TimesheetStatus: string
 
     /**
      * Le motif est obligatoire pour les retours en correction, la préparation
-     * à la validation et la réouverture d'un relevé validé.
+     * à la validation, la transmission directe d'un brouillon corrigé par le
+     * Bureau/Direction et la réouverture d'un relevé validé.
      */
     public function requiresReasonTo(self $target): bool
     {
         if ($this === self::AControler) {
             return in_array($target, [self::ACorriger, self::PretePourValidation], true);
+        }
+
+        if ($this === self::Brouillon && $target === self::PretePourValidation) {
+            return true;
         }
 
         return $this === self::Validee && $target === self::Brouillon;

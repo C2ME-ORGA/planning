@@ -80,8 +80,18 @@ class TimesheetSegment extends Model
         });
 
         // Défense en profondeur : le service d'écriture reste la garantie
-        // principale, mais une suppression directe via le modèle ne doit pas
-        // contourner le verrouillage du relevé.
+        // principale, mais une modification ou une suppression directe via le
+        // modèle ne doit pas contourner le verrouillage du relevé.
+        static::updating(function (TimesheetSegment $segment): void {
+            $timesheet = $segment->timesheet()->first();
+
+            if (! $timesheet instanceof Timesheet || ! $timesheet->status->isEditable()) {
+                throw new LogicException(
+                    'Un segment ne peut être modifié que sur un relevé en brouillon.',
+                );
+            }
+        });
+
         static::deleting(function (TimesheetSegment $segment): void {
             $timesheet = $segment->timesheet()->first();
 

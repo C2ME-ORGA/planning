@@ -49,6 +49,7 @@ final class TimesheetActorHistory
         return [
             AuditAction::TimesheetReturnedForCorrection->value,
             AuditAction::TimesheetReadyForValidation->value,
+            AuditAction::TimesheetSentToValidation->value,
         ];
     }
 
@@ -60,6 +61,69 @@ final class TimesheetActorHistory
     public function hasControlled(User $user, Timesheet $timesheet): bool
     {
         return $this->hasAction($timesheet, $this->controlActions(), $user);
+    }
+
+    /**
+     * Une correction effective de segment a-t-elle été réalisée par cet acteur
+     * dans le cycle courant ?
+     *
+     * Seuls les événements `timesheet.updated` du cycle courant sont retenus.
+     * Une création ou une suppression de segment compte comme correction. Une
+     * modification ne compte que si `changed_fields` contient réellement une
+     * valeur avant/après différente : une écriture sans changement effectif ne
+     * prouve rien. L'acteur et le relevé doivent correspondre exactement.
+     */
+    public function hasCorrectedInCurrentCycle(User $user, Timesheet $timesheet): bool
+    {
+        $boundarySequence = $this->latestCycleBoundary($timesheet)?->sequence;
+
+        return $this->baseQuery($timesheet)
+            ->where('actor_id', $user->getKey())
+            ->where('action', AuditAction::TimesheetUpdated->value)
+            ->when(
+                $boundarySequence !== null,
+                static fn (Builder $query): Builder => $query->where('sequence', '>', $boundarySequence),
+            )
+            ->get()
+            ->contains(fn (AuditEvent $event): bool => $this->isEffectiveSegmentCorrection($event));
+    }
+
+    private function isEffectiveSegmentCorrection(AuditEvent $event): bool
+    {
+        $changes = $event->changes ?? [];
+        $operation = $changes['operation'] ?? null;
+
+        if (in_array($operation, ['segment_added', 'segment_deleted'], true)) {
+            return isset($changes['segment_id']);
+        }
+
+        if ($operation !== 'segment_updated') {
+            return false;
+        }
+
+        $changedFields = $changes['changed_fields'] ?? null;
+        $before = $changes['before'] ?? null;
+        $after = $changes['after'] ?? null;
+
+        if (! is_array($changedFields) || $changedFields === [] || ! is_array($before) || ! is_array($after)) {
+            return false;
+        }
+
+        foreach (['category', 'start_at', 'end_at'] as $field) {
+            if (! in_array($field, $changedFields, true)) {
+                continue;
+            }
+
+            if (! array_key_exists($field, $before) || ! array_key_exists($field, $after)) {
+                continue;
+            }
+
+            if ($before[$field] !== $after[$field]) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -92,10 +156,6 @@ final class TimesheetActorHistory
             $boundarySequence,
         );
 
-        if ($submittedSequence === null) {
-            return false;
-        }
-
         if ($timesheet->status === TimesheetStatus::PretePourValidation) {
             $readySequence = $this->latestAttributedSequence(
                 $timesheet,
@@ -103,12 +163,24 @@ final class TimesheetActorHistory
                 $boundarySequence,
             );
 
-            if ($readySequence === null || $readySequence <= $submittedSequence) {
-                return false;
-            }
+            $normalPath = $submittedSequence !== null
+                && $readySequence !== null
+                && $readySequence > $submittedSequence;
+
+            // Le Bureau/Direction peut transmettre directement un brouillon
+            // corrigé à la validation finale, sans transmission préalable du
+            // salarié. Cet événement, attribué et postérieur à la frontière du
+            // cycle, remplace la paire submitted/ready.
+            $directSequence = $this->latestAttributedSequence(
+                $timesheet,
+                AuditAction::TimesheetSentToValidation->value,
+                $boundarySequence,
+            );
+
+            return $normalPath || $directSequence !== null;
         }
 
-        return true;
+        return $submittedSequence !== null;
     }
 
     /**

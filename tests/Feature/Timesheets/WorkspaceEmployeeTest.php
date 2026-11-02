@@ -151,6 +151,32 @@ it('adds, modifies and deletes a segment while signalling overlaps without block
     expect($timesheet->segments()->count())->toBe(1);
 });
 
+it('signals a segment longer than twelve hours without blocking the entry', function (): void {
+    [$ownerUser, $owner] = workspaceEmployeeContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    TimesheetFixtures::segment(
+        $timesheet,
+        start: '2026-11-02 06:00:00',
+        end: '2026-11-02 19:00:00',
+    );
+
+    $this->actingAs($ownerUser);
+
+    Livewire::test(WeeklyTimesheet::class, ['week' => '2026-11-02'])
+        ->assertOk()
+        ->assertSee('Avertissement de durée')
+        ->assertSee('plus de 12 heures')
+        ->assertSee('13 h');
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertOk()
+        ->assertSee('Avertissement de durée')
+        ->assertSee('plus de 12 heures');
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and($timesheet->segments()->count())->toBe(1);
+});
+
 it('refuses to edit a locked timesheet and keeps the stored segments intact', function (): void {
     [$ownerUser, $owner] = workspaceEmployeeContext();
     $timesheet = TimesheetFixtures::timesheet(
@@ -223,6 +249,38 @@ it('submits, displays a correction and resumes the cycle before resubmitting', f
             ->where('action', AuditAction::TimesheetSubmitted->value)
             ->where('subject_id', (string) $timesheet->getKey())
             ->count())->toBe(2);
+});
+
+it('does not allow an employee to send a draft directly to validation', function (): void {
+    [$ownerUser, $owner] = workspaceEmployeeContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    TimesheetFixtures::segment($timesheet);
+
+    $this->actingAs($ownerUser);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertDontSee('Transmettre directement à la validation')
+        ->set('directReason', 'Tentative de transmission directe.')
+        ->call('sendToValidation')
+        ->assertForbidden();
+
+    expect($timesheet->fresh()?->status)->toBe(TimesheetStatus::Brouillon)
+        ->and(AuditEvent::query()->where('action', AuditAction::TimesheetSentToValidation->value)->count())->toBe(0);
+});
+
+it('does not expose the Bureau correction interface to an employee', function (): void {
+    [$ownerUser, $owner] = workspaceEmployeeContext();
+    $timesheet = TimesheetFixtures::timesheet($owner, week: '2026-11-02');
+    TimesheetFixtures::segment($timesheet);
+
+    $this->actingAs($ownerUser);
+
+    Livewire::test(TimesheetDetail::class, ['timesheet' => $timesheet])
+        ->assertDontSee('Ajouter un segment')
+        ->call('startAddingSegment')
+        ->assertForbidden();
+
+    expect($timesheet->segments()->count())->toBe(1);
 });
 
 it('navigates between weeks through full-page Livewire redirects', function (): void {

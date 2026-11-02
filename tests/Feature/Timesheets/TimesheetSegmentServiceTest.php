@@ -51,12 +51,14 @@ it('adds a segment in a draft and derives the offsets from the instant', functio
         ->and($segment->start_offset_minutes)->toBe(60)
         ->and($segment->end_offset_minutes)->toBe(60);
 
-    expect(AuditEvent::query()
+    $event = AuditEvent::query()
         ->where('action', AuditAction::TimesheetUpdated->value)
         ->where('subject_id', (string) $this->timesheet->getKey())
         ->where('actor_id', $this->ownerUser->getKey())
         ->where('changes->operation', 'segment_added')
-        ->exists())->toBeTrue();
+        ->firstOrFail();
+
+    expect($event->changes['cycle_sequence'] ?? null)->toBe(0);
 });
 
 it('lets the Bureau write a segment in a draft', function (): void {
@@ -192,6 +194,7 @@ it('updates a segment and records the changed fields', function (): void {
 
     expect($event->actor_id)->toBe($this->ownerUser->getKey())
         ->and($event->changes['segment_id'] ?? null)->toBe($segment->getKey())
+        ->and($event->changes['cycle_sequence'] ?? null)->toBe(0)
         ->and($changed)->toContain('category')
         ->and($changed)->toContain('start_at')
         ->and($changed)->toContain('end_at');
@@ -225,6 +228,7 @@ it('deletes a segment in a draft and keeps a trace of the deleted values', funct
         ->firstOrFail();
 
     expect($event->changes['segment_id'] ?? null)->toBe($segment->getKey())
+        ->and($event->changes['cycle_sequence'] ?? null)->toBe(0)
         ->and($event->changes)->toHaveKeys(['category', 'start_at', 'end_at']);
 });
 
@@ -235,6 +239,21 @@ it('refuses a direct model deletion outside the draft state', function (): void 
     expect(fn () => $segment->delete())->toThrow(LogicException::class);
 
     expect(TimesheetSegment::query()->whereKey($segment->getKey())->exists())->toBeTrue();
+});
+
+it('refuses a direct model update outside the draft state', function (): void {
+    $locked = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09', status: TimesheetStatus::AControler);
+    $segment = TimesheetFixtures::segment(
+        $locked,
+        start: '2026-11-09 08:00:00',
+        end: '2026-11-09 12:00:00',
+    );
+
+    expect(fn () => $segment->update([
+        'end_at' => CarbonImmutable::parse('2026-11-09 13:00:00', 'Europe/Paris')->utc(),
+    ]))->toThrow(LogicException::class);
+
+    expect($segment->fresh()?->end_at?->setTimezone('Europe/Paris')->format('H:i'))->toBe('12:00');
 });
 
 it('rolls back the segment write when the audit fails', function (): void {

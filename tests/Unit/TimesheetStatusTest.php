@@ -8,9 +8,9 @@ it('keeps the five workflow states', function (): void {
         ->toBe(['brouillon', 'a_controler', 'a_corriger', 'prete_pour_validation', 'validee']);
 });
 
-it('allows only the six reference transitions and forbids all others', function (): void {
+it('allows only the seven reference transitions and forbids all others', function (): void {
     $expected = [
-        'brouillon' => ['a_controler'],
+        'brouillon' => ['a_controler', 'prete_pour_validation'],
         'a_controler' => ['a_corriger', 'prete_pour_validation'],
         'a_corriger' => ['brouillon'],
         'prete_pour_validation' => ['validee'],
@@ -47,6 +47,7 @@ it('declares only the draft as editable', function (): void {
 
 it('requires a reason only for the reference transitions', function (): void {
     $required = [
+        'brouillon|prete_pour_validation',
         'a_controler|a_corriger',
         'a_controler|prete_pour_validation',
         'validee|brouillon',

@@ -246,7 +246,8 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   couverte. Tous les responsables admissibles le sont sans priorité.
 - **Séparation des tâches** : `App\Services\Timesheets\TimesheetActorHistory`
   lit les événements `timesheet.created`, `timesheet.updated`,
-  `timesheet.submitted`, `timesheet.returned_for_correction` et
+  `timesheet.submitted`, `timesheet.sent_to_validation`,
+  `timesheet.returned_for_correction` et
   `timesheet.ready_for_validation`.
   `TimesheetPolicy::validate()` refuse un préparateur et un contrôleur, et exige
   une piste d'audit complète. Le propriétaire est autorisé uniquement s'il est
@@ -326,8 +327,11 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   Un objet chargé avant un changement de statut est donc revalidé sous verrou.
   L'audit est écrit dans la même transaction que la modification : une erreur
   d'audit annule l'écriture métier.
-- **Transmission** : réservée au salarié propriétaire, avec un compte actif et
-  lié ; le Bureau et les responsables ne transmettent jamais à sa place. La
+- **Transmission** : la transmission vers le contrôle (`À contrôler`) est
+  réservée au salarié propriétaire, avec un compte actif et lié ; le Bureau et
+  les responsables ne transmettent jamais à sa place vers le contrôle. Le
+  Bureau/Direction dispose d'un parcours distinct de transmission directe à la
+  validation finale après correction d'un brouillon (voir §3.6). La
   transmission exige au moins un segment, revalide la précision à la minute et
   les bornes de semaine de chaque segment existant, reste non bloquante pour
   les avertissements de chevauchement et de durée supérieure à 720 minutes, et
@@ -335,11 +339,19 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   nouvel événement ; ce retour ne rejoue pas les contrôles de contenu et
   n'écrit ni transition ni audit. Aucune clé d'idempotence réseau n'est
   introduite (Lot 10).
+- **Avertissements de durée** : `WorkedTimeCalculator` signale tout segment
+  strictement supérieur à 720 minutes (12 h). La règle est appliquée à la
+  soumission et projetée en lecture par `TimesheetSummary::durationWarnings()`.
+  L'interface hebdomadaire et la fiche détail affichent cet avertissement de
+  façon non bloquante : aucun segment n'est déplacé, tronqué ou refusé du seul
+  fait de sa durée. Un segment de 720 minutes exactement n'est pas signalé ;
+  721 minutes le sont.
 - **Audit des segments** : les ajouts, modifications et suppressions réutilisent
   `timesheet.updated`. L'événement porte `operation`, l'identifiant du segment,
-  les champs modifiés et les valeurs utiles (catégorie, instants UTC). Une
-  suppression conserve l'identifiant et les valeurs supprimées sans prétendre
-  que le segment existe encore. Aucun motif n'est dupliqué dans `changes`.
+  `cycle_sequence` (séquence de la dernière frontière de cycle), les champs
+  modifiés et les valeurs utiles (catégorie, instants UTC). Une suppression
+  conserve l'identifiant et les valeurs supprimées sans prétendre que le segment
+  existe encore. Aucun motif n'est dupliqué dans `changes`.
 - **Motifs** : `TimesheetReason` applique `trim()`, refuse un motif obligatoire
   absent, blanc ou inférieur à 10 caractères, borne à 500 caractères Unicode et
   retourne la valeur normalisée. La même valeur doit servir à l'autorisation Gate
@@ -372,12 +384,15 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   si la piste requise est incomplète ou non attribuable. Le contrôle et la
   réouverture suivent le même modèle dans `TimesheetControlService` et
   `TimesheetValidationService` (§3.6).
-- **Garde de suppression** : `TimesheetSegment::deleting` refuse la suppression
-  hors brouillon en défense en profondeur. Le service reste l'autorité
-  principale. Limite : les suppressions de masse Eloquent
-  (`query()->delete()`, `destroy()`) et les écritures directes via Query Builder
-  ne déclenchent pas les événements du modèle et ne sont donc pas couvertes par
-  ce garde. Aucun trigger SQL n'est ajouté.
+- **Garde d'écriture** : `TimesheetSegment::updating` et
+  `TimesheetSegment::deleting` refusent toute modification ou suppression hors
+  brouillon en défense en profondeur. Le service reste l'autorité principale.
+  Limite : les mises à jour ou suppressions de masse Eloquent
+  (`query()->update()`, `query()->delete()`, `destroy()`) et les écritures
+  directes via Query Builder ne déclenchent pas les événements du modèle et ne
+  sont donc pas couvertes par ces gardes. Elles restent réservées aux
+  traitements d'import ou de maintenance, qui doivent revalider le statut du
+  relevé. Aucun trigger SQL n'est ajouté.
 - **Reporté** : le motif obligatoire pour une journée attendue sans heure
   dépend du planning et des absences (Lot 7). Le contrôle, la reprise de
   correction, la validation finale, la réouverture, le contrôle groupé,
@@ -387,11 +402,14 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
 ### 3.6 Contrôle, correction et validation (Lot 5, incrément 2C)
 
 - **Services** : `TimesheetControlService` gère le retour en correction
-  (`requestCorrection`, motif obligatoire), la reprise (`resumeCorrection`) et
-  la préparation à la validation (`markReadyForValidation`, motif obligatoire).
-  `TimesheetValidationService` gère la validation finale (`validate`) et la
-  réouverture motivée (`reopen`).
+  (`requestCorrection`, motif obligatoire), la reprise (`resumeCorrection`), la
+  préparation à la validation (`markReadyForValidation`, motif obligatoire) et
+  la transmission directe d'un brouillon corrigé par le Bureau/Direction
+  (`sendToValidation`, motif obligatoire). `TimesheetValidationService` gère la
+  validation finale (`validate`) et la réouverture motivée (`reopen`).
 - **Transitions** : seules celles de `TimesheetStatus` sont exécutées :
+  `Brouillon → À contrôler` (salarié propriétaire),
+  `Brouillon → Prête pour validation` (Bureau/Direction, correction directe),
   `À contrôler → À corriger`, `À corriger → Brouillon`,
   `À contrôler → Prête pour validation`, `Prête pour validation → Validée` et
   `Validée → Brouillon`. Aucune autre transition n'est acceptée.
@@ -399,8 +417,10 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   avec `lockForUpdate()`, recharge son statut, puis appelle la policy sur
   l'instance verrouillée. Le contrôle exige `timesheet.validate` ou le périmètre
   historique ; la validation finale reste réservée à `timesheet.validate` et
-  refuse un préparateur et un contrôleur. Le propriétaire Bureau/Direction peut
-  s'auto-valider avec un motif d'au moins 10 caractères et un événement dédié.
+  refuse un préparateur et un contrôleur. L'auteur d'une transmission directe
+  est traité comme contrôleur : il ne peut pas valider ensuite un relevé dont il
+  n'est pas propriétaire. Le propriétaire Bureau/Direction peut s'auto-valider
+  avec un motif d'au moins 10 caractères et un événement dédié.
   L'acteur ayant repris une correction n'est pas exclu : il peut valider après
   un nouveau cycle complet s'il dispose de `timesheet.validate`. Le chef
   d'équipe, le conducteur de travaux et l'Administrateur ne peuvent jamais
@@ -409,7 +429,7 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
   actions. Un compte inactif est refusé avant toute transition, y compris après
   rechargement du relevé sous verrou.
 - **Motifs** : les motifs de retour en correction, de préparation à la
-  validation, de réouverture et d'auto-validation sont normalisés une seule fois
+  validation, de transmission directe, de réouverture et d'auto-validation sont normalisés une seule fois
   par `TimesheetReason` ; la même valeur sert à l'autorisation et à
   `audit_events.reason`. Un motif obligatoire comporte entre 10 et 500
   caractères après `trim()`. Les transitions sans motif obligatoire n'en
@@ -419,14 +439,39 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
 - **Audit et atomicité** : chaque transition écrit son événement dans la même
   transaction que le changement de statut :
   `timesheet.returned_for_correction`, `timesheet.correction_resumed`,
-  `timesheet.ready_for_validation`, `timesheet.validated` et
-  `timesheet.reopened`. Une erreur d'audit annule la transition.
+  `timesheet.ready_for_validation`, `timesheet.sent_to_validation`,
+  `timesheet.validated` et `timesheet.reopened`. Une erreur d'audit annule la
+  transition.
 - **Répétition** : une requête répétée est refusée par la matrice d'états et ne
   crée ni transition ni événement. Seule la transmission reste idempotente par
   état (voir §3.5), sans clé d'idempotence réseau.
 - **Reporté** : le contrôle groupé, les tableaux de bord et l'interface restent
   hors périmètre de 2C. Le motif obligatoire d'une journée attendue sans heure
   reste différé au Lot 7. Aucune migration n'était nécessaire pour 2C.
+- **Correction directe du Bureau/Direction (PC1-13/PC1-33)** : après correction
+  effective d'un brouillon, le Bureau/Direction peut le transmettre directement
+  à la validation finale avec `TimesheetControlService::sendToValidation()`. La
+  transition `Brouillon → Prête pour validation` est réservée au rôle
+  Bureau/Direction disposant de `timesheet.validate`, exige un motif normalisé
+  de 10 à 500 caractères, une correction effective de segment par le même acteur
+  dans le cycle courant et revalide sous verrou l'existence et les bornes des
+  segments. `TimesheetActorHistory::hasCorrectedInCurrentCycle()` ne retient que
+  les événements `timesheet.updated` attribués au même acteur et postérieurs à
+  la dernière frontière de cycle : une création ou une suppression de segment
+  compte, une modification ne compte que si les valeurs avant/après diffèrent.
+  L'événement `timesheet.sent_to_validation` porte l'acteur, son rôle,
+  l'horodatage, le motif et les statuts avant/après avec
+  `path = bureau_correction`. `TimesheetActorHistory` accepte cet événement
+  attribué comme preuve de complétude du cycle courant et l'inclut dans les
+  actions de contrôle : l'auteur ne peut pas valider ensuite un relevé dont il
+  n'est pas propriétaire. La fiche détail expose au Bureau/Direction un
+  formulaire d'ajout, de modification et de suppression des segments d'un
+  brouillon d'un autre salarié ; les écritures passent exclusivement par
+  `TimesheetSegmentService` et restent auditées avant/après. Le propriétaire
+  Bureau/Direction conserve l'auto-validation motivée déjà définie en PC1-32.
+  Les chefs d'équipe et les conducteurs de travaux ne peuvent ni corriger ce
+  brouillon, ni transmettre directement, ni s'auto-valider. Le parcours normal
+  du salarié (`Brouillon → À contrôler → Prête → Validée`) reste inchangé.
 - **Revue des chevauchements (PC1-32, Lot A)** : `TimesheetOverlapDetector`
   reste la source de détection, avec ses avertissements non bloquants à la
   transmission. `TimesheetOverlapReviewService` persiste l'état courant dans

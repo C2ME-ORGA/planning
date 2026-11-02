@@ -72,6 +72,7 @@ it('allows editing only a draft, by its owner or the Bureau', function (): void 
     expect($this->policy->update($this->ownerUser, $draft))->toBeTrue()
         ->and($this->policy->update($this->bureau, $draft))->toBeTrue()
         ->and($this->policy->update($this->chefUser, $draft))->toBeFalse()
+        ->and($this->policy->update($this->conducteurUser, $draft))->toBeFalse()
         ->and($this->policy->update($this->otherUser, $draft))->toBeFalse();
 
     $lockedWeeks = ['2026-11-09', '2026-11-16', '2026-11-23', '2026-11-30'];
@@ -97,6 +98,32 @@ it('allows submission only to the owner with at least one segment', function ():
 
     expect(Gate::forUser($this->ownerUser)->allows('submit', $filled))->toBeTrue()
         ->and(Gate::forUser($this->bureau)->allows('submit', $filled))->toBeFalse();
+});
+
+it('allows direct transmission of a corrected draft to the Bureau only, with a reason', function (): void {
+    $filled = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09');
+    TimesheetFixtures::segment($filled);
+
+    expect($this->policy->sendToValidation($this->bureau, $filled, 'Correction effectuée par le Bureau.'))->toBeTrue()
+        ->and($this->policy->sendToValidation($this->bureau, $filled))->toBeFalse()
+        ->and($this->policy->sendToValidation($this->bureau, $filled, '   '))->toBeFalse()
+        ->and($this->policy->sendToValidation($this->bureau, $filled, '123456789'))->toBeFalse()
+        ->and($this->policy->sendToValidation($this->bureau, $filled, str_repeat('a', 501)))->toBeFalse()
+        ->and($this->policy->sendToValidation($this->ownerUser, $filled, 'Correction effectuée par le Bureau.'))->toBeFalse()
+        ->and($this->policy->sendToValidation($this->chefUser, $filled, 'Correction effectuée par le Bureau.'))->toBeFalse()
+        ->and($this->policy->sendToValidation($this->conducteurUser, $filled, 'Correction effectuée par le Bureau.'))->toBeFalse();
+
+    expect(Gate::forUser($this->bureau)->allows('sendToValidation', [$filled, 'Correction effectuée par le Bureau.']))->toBeTrue()
+        ->and(Gate::forUser($this->bureau)->allows('sendToValidation', $filled))->toBeFalse();
+
+    $locked = TimesheetFixtures::timesheet($this->owner, week: '2026-11-16', status: TimesheetStatus::AControler);
+
+    expect($this->policy->sendToValidation($this->bureau, $locked, 'Correction effectuée par le Bureau.'))->toBeFalse();
+
+    $draft = TimesheetFixtures::timesheet($this->owner, week: '2026-11-23');
+
+    expect($this->policy->markReadyForValidation($this->chefUser, $draft, 'Contrôle satisfaisant'))->toBeFalse()
+        ->and($this->policy->markReadyForValidation($this->bureau, $draft, 'Contrôle satisfaisant'))->toBeFalse();
 });
 
 it('requires the control perimeter and a reason to return or prepare a timesheet', function (): void {
@@ -266,12 +293,14 @@ it('refuses every business ability to an inactive account', function (): void {
     $inactive->forceFill(['is_active' => false])->save();
 
     $timesheet = TimesheetFixtures::timesheet($this->owner, status: TimesheetStatus::PretePourValidation);
+    $draft = TimesheetFixtures::timesheet($this->owner, week: '2026-11-09');
 
     expect($this->policy->viewAny($inactive))->toBeFalse()
         ->and($this->policy->view($inactive, $timesheet))->toBeFalse()
         ->and($this->policy->update($inactive, $timesheet))->toBeFalse()
         ->and($this->policy->requestCorrection($inactive, $timesheet, 'Correction demandée'))->toBeFalse()
         ->and($this->policy->markReadyForValidation($inactive, $timesheet, 'Contrôle satisfaisant'))->toBeFalse()
+        ->and($this->policy->sendToValidation($inactive, $draft, 'Correction effectuée par le Bureau.'))->toBeFalse()
         ->and($this->policy->validate($inactive, $timesheet, 'Auto-validation motivée'))->toBeFalse();
 });
 

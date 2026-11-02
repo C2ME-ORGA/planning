@@ -61,6 +61,7 @@ enum AuditAction: string
     case TimesheetCreated = 'timesheet.created';
     case TimesheetUpdated = 'timesheet.updated';
     case TimesheetSubmitted = 'timesheet.submitted';
+    case TimesheetSentToValidation = 'timesheet.sent_to_validation';
     case TimesheetReturnedForCorrection = 'timesheet.returned_for_correction';
     case TimesheetCorrectionResumed = 'timesheet.correction_resumed';
     case TimesheetReadyForValidation = 'timesheet.ready_for_validation';
@@ -126,6 +127,7 @@ enum AuditAction: string
             self::TimesheetCreated => 'Relevé d’heures créé',
             self::TimesheetUpdated => 'Relevé d’heures modifié',
             self::TimesheetSubmitted => 'Relevé transmis',
+            self::TimesheetSentToValidation => 'Relevé transmis directement à la validation',
             self::TimesheetReturnedForCorrection => 'Relevé retourné en correction',
             self::TimesheetCorrectionResumed => 'Reprise du relevé en correction',
             self::TimesheetReadyForValidation => 'Relevé prêt pour validation',

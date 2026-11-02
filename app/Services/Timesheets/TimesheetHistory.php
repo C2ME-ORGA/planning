@@ -34,6 +34,7 @@ final class TimesheetHistory
             AuditAction::TimesheetCreated->value,
             AuditAction::TimesheetUpdated->value,
             AuditAction::TimesheetSubmitted->value,
+            AuditAction::TimesheetSentToValidation->value,
             AuditAction::TimesheetReturnedForCorrection->value,
             AuditAction::TimesheetCorrectionResumed->value,
             AuditAction::TimesheetReadyForValidation->value,
@@ -260,6 +261,10 @@ final class TimesheetHistory
 
         if (isset($changes['segments_count'])) {
             $details[] = sprintf('Segments transmis : %d', (int) $changes['segments_count']);
+        }
+
+        if (($changes['path'] ?? null) === 'bureau_correction') {
+            $details[] = 'Transmission directe par le Bureau/Direction';
         }
 
         $warnings = $event->context['warnings'] ?? null;
