@@ -1,12 +1,12 @@
 <?php
 
-use App\\Enums\\AuditAction;
-use App\\Enums\\Permission;
-use App\\Enums\\Role;
-use App\\Models\\AuditEvent;
-use App\\Models\\User;
-use App\\Notifications\\AccountActivationNotification;
-use Illuminate\\Support\\Facades\\Notification;
+use App\Enums\AuditAction;
+use App\Enums\Permission;
+use App\Enums\Role;
+use App\Models\AuditEvent;
+use App\Models\User;
+use App\Notifications\AccountActivationNotification;
+use Illuminate\Support\Facades\Notification;
 
 it('creates an additional Bureau account with an authorized Bureau actor', function () {
     Notification::fake();
