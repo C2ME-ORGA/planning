@@ -67,19 +67,43 @@ class PermissionExceptionService
             throw new RuntimeException('La durée maximale d’une exception est de douze mois.');
         }
 
-        $alreadyGranted = PermissionException::query()
-            ->where('user_id', $target->getKey())
-            ->where('permission', $permission->value)
-            ->active()
-            ->exists();
-
-        if ($alreadyGranted) {
-            throw new RuntimeException('Une exception active identique existe déjà.');
-        }
-
         return DB::transaction(function () use ($target, $permission, $reason, $expiresAt, $actor): PermissionException {
+            // Le verrou sur le compte cible sérialise toutes les créations
+            // d'exception pour ce compte. La vérification de doublon est
+            // refaite après acquisition du verrou.
+            $lockedTarget = User::query()
+                ->whereKey($target->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if (! $lockedTarget instanceof User) {
+                throw new RuntimeException('Ce compte est introuvable.');
+            }
+
+            if (! $lockedTarget->isActive()) {
+                throw new RuntimeException('Une exception ne peut pas être accordée à un compte inactif.');
+            }
+
+            if ($lockedTarget->isAdministrator()) {
+                throw new RuntimeException('Un Administrateur technique ne reçoit pas de capacité métier par exception.');
+            }
+
+            if ($lockedTarget->hasPermission($permission)) {
+                throw new RuntimeException('Ce compte dispose déjà de cette capacité.');
+            }
+
+            $alreadyGranted = PermissionException::query()
+                ->where('user_id', $lockedTarget->getKey())
+                ->where('permission', $permission->value)
+                ->active()
+                ->exists();
+
+            if ($alreadyGranted) {
+                throw new RuntimeException('Une exception active identique existe déjà.');
+            }
+
             $exception = PermissionException::query()->create([
-                'user_id' => $target->getKey(),
+                'user_id' => $lockedTarget->getKey(),
                 'permission' => $permission->value,
                 'reason' => $reason,
                 'granted_by_id' => $actor->getKey(),
@@ -89,7 +113,7 @@ class PermissionExceptionService
 
             $this->audit->record(
                 AuditAction::PermissionExceptionGranted,
-                $target,
+                $lockedTarget,
                 [
                     'exception_id' => $exception->getKey(),
                     'permission' => $permission->value,
@@ -108,26 +132,37 @@ class PermissionExceptionService
         $this->assertCanManage($actor);
         $this->assertReason($reason);
 
-        if ($exception->revoked_at !== null) {
-            throw new RuntimeException('Cette exception est déjà révoquée.');
-        }
+        DB::transaction(function () use ($exception, $reason, $actor): void {
+            $locked = PermissionException::query()
+                ->whereKey($exception->getKey())
+                ->lockForUpdate()
+                ->first();
 
-        $exception->forceFill([
-            'revoked_at' => now(),
-            'revoked_by_id' => $actor->getKey(),
-            'revocation_reason' => $reason,
-        ])->save();
+            if (! $locked instanceof PermissionException) {
+                throw new RuntimeException('Cette exception est introuvable.');
+            }
 
-        $this->audit->record(
-            AuditAction::PermissionExceptionRevoked,
-            $exception->user,
-            [
-                'exception_id' => $exception->getKey(),
-                'permission' => $exception->permission->value,
-            ],
-            $reason,
-            $actor,
-        );
+            if ($locked->revoked_at !== null) {
+                throw new RuntimeException('Cette exception est déjà révoquée.');
+            }
+
+            $locked->forceFill([
+                'revoked_at' => now(),
+                'revoked_by_id' => $actor->getKey(),
+                'revocation_reason' => $reason,
+            ])->save();
+
+            $this->audit->record(
+                AuditAction::PermissionExceptionRevoked,
+                $locked->user,
+                [
+                    'exception_id' => $locked->getKey(),
+                    'permission' => $locked->permission->value,
+                ],
+                $reason,
+                $actor,
+            );
+        });
     }
 
     /**

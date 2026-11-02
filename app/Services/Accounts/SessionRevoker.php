@@ -18,25 +18,38 @@ class SessionRevoker
 {
     public function revoke(User $user): int
     {
-        $table = (string) config('session.table', 'sessions');
+        return DB::transaction(function () use ($user): int {
+            $table = (string) config('session.table', 'sessions');
 
-        $deleted = DB::table($table)->where('user_id', $user->getKey())->delete();
+            $deleted = DB::table($table)->where('user_id', $user->getKey())->delete();
 
-        $user->forceFill(['remember_token' => Str::random(60)])->saveQuietly();
+            $user->forceFill(['remember_token' => Str::random(60)])->saveQuietly();
 
-        return $deleted;
+            return $deleted;
+        });
     }
 
     public function revokeAll(): int
     {
         $table = (string) config('session.table', 'sessions');
 
-        $deleted = DB::table($table)->delete();
+        return DB::transaction(function () use ($table): int {
+            $deleted = DB::table($table)->delete();
 
-        User::query()->each(static function (User $user): void {
-            $user->forceFill(['remember_token' => Str::random(60)])->saveQuietly();
+            // Parcours borné : les utilisateurs sont traités par lots de 500.
+            DB::table('users')
+                ->select('id')
+                ->orderBy('id')
+                ->chunkById(500, static function ($users): void {
+                    foreach ($users as $user) {
+                        DB::table('users')->where('id', $user->id)->update([
+                            'remember_token' => Str::random(60),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                });
+
+            return $deleted;
         });
-
-        return $deleted;
     }
 }

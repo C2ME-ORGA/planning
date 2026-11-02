@@ -8,6 +8,7 @@ use App\Notifications\AccountActivationNotification;
 use App\Services\Accounts\AccountActivationService;
 use App\Services\Accounts\AccountAdministration;
 use App\Services\Accounts\AccountProvisioner;
+use App\Services\Audit\AuditLogger;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Notification;
@@ -173,6 +174,195 @@ it('immediately revokes sessions when an account is deactivated', function () {
     $this->assertGuest();
 });
 
+it('reactivates an account, audits the action and revokes its sessions', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->inactive()->create();
+    $initialToken = $target->remember_token;
+    insertSessionFor($target, 'session-reactivate');
+
+    app(AccountAdministration::class)->reactivate($target, 'Retour après absence prolongée.', $actor);
+
+    $target->refresh();
+
+    expect($target->is_active)->toBeTrue()
+        ->and($target->deactivated_at)->toBeNull()
+        ->and($target->remember_token)->not->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $target->id)->count())->toBe(0);
+
+    $this->assertDatabaseHas('audit_events', [
+        'action' => AuditAction::AccountReactivated->value,
+        'subject_id' => (string) $target->id,
+        'actor_id' => $actor->id,
+        'reason' => 'Retour après absence prolongée.',
+    ]);
+});
+
+it('changes a role, audits it once and revokes sessions', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $initialToken = $target->remember_token;
+    insertSessionFor($target, 'session-role');
+
+    app(AccountAdministration::class)->changeRole($target, Role::ChefEquipe, $actor);
+
+    $target->refresh();
+
+    $events = DB::table('audit_events')
+        ->where('action', AuditAction::RoleChanged->value)
+        ->get();
+
+    expect($target->role)->toBe(Role::ChefEquipe)
+        ->and($target->remember_token)->not->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $target->id)->count())->toBe(0)
+        ->and($events)->toHaveCount(1)
+        ->and($events->first()->actor_id)->toBe($actor->id)
+        ->and($events->first()->subject_id)->toBe((string) $target->id);
+});
+
+it('revokes sessions with a reason and records the revoked count', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $initialToken = $target->remember_token;
+    insertSessionFor($target, 'session-revoke-1');
+    insertSessionFor($target, 'session-revoke-2');
+
+    app(AccountAdministration::class)->revokeSessions($target, 'Revue de sécurité périodique.', $actor);
+
+    $target->refresh();
+
+    $event = DB::table('audit_events')
+        ->where('action', AuditAction::SessionsRevoked->value)
+        ->first();
+
+    expect($target->remember_token)->not->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $target->id)->count())->toBe(0)
+        ->and($event)->not->toBeNull()
+        ->and(json_decode($event->changes, true)['sessions_revoked'])->toBe(2);
+});
+
+it('resets MFA, audits it without observer duplicate and revokes sessions', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->admin()->withMultiFactorAuthentication()->create();
+    $initialToken = $target->remember_token;
+    insertSessionFor($target, 'session-mfa');
+
+    app(AccountAdministration::class)->resetMultiFactor($target, 'Perte de l’appareil et des codes.', $actor);
+
+    $target->refresh();
+
+    expect($target->app_authentication_secret)->toBeNull()
+        ->and($target->app_authentication_recovery_codes)->toBeNull()
+        ->and($target->remember_token)->not->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $target->id)->count())->toBe(0);
+
+    $this->assertDatabaseHas('audit_events', [
+        'action' => AuditAction::MfaReset->value,
+        'subject_id' => (string) $target->id,
+        'actor_id' => $actor->id,
+    ]);
+
+    expect(DB::table('audit_events')->where('action', AuditAction::MfaDisabled->value)->count())->toBe(0);
+});
+
+it('rolls back deactivation when the audit write fails', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $initialToken = $target->remember_token;
+    insertSessionFor($target, 'session-rollback-deactivate');
+
+    $audit = Mockery::mock(AuditLogger::class);
+    $audit->shouldReceive('record')->andThrow(new RuntimeException('Échec d’audit simulé.'));
+    app()->instance(AuditLogger::class, $audit);
+
+    expect(fn () => app(AccountAdministration::class)->deactivate($target, 'Tentative de désactivation.', $actor))
+        ->toThrow(RuntimeException::class);
+
+    $target->refresh();
+
+    expect($target->is_active)->toBeTrue()
+        ->and($target->remember_token)->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $target->id)->count())->toBe(1);
+});
+
+it('rolls back a role change when the audit write fails', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $initialToken = $target->remember_token;
+    insertSessionFor($target, 'session-rollback-role');
+
+    $audit = Mockery::mock(AuditLogger::class);
+    $audit->shouldReceive('record')->andThrow(new RuntimeException('Échec d’audit simulé.'));
+    app()->instance(AuditLogger::class, $audit);
+
+    expect(fn () => app(AccountAdministration::class)->changeRole($target, Role::ChefEquipe, $actor))
+        ->toThrow(RuntimeException::class);
+
+    $target->refresh();
+
+    expect($target->role)->toBe(Role::Ouvrier)
+        ->and($target->remember_token)->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $target->id)->count())->toBe(1);
+});
+
+it('rolls back an MFA reset when the audit write fails', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->admin()->withMultiFactorAuthentication()->create();
+    $initialToken = $target->remember_token;
+    insertSessionFor($target, 'session-rollback-mfa');
+
+    $audit = Mockery::mock(AuditLogger::class);
+    $audit->shouldReceive('record')->andThrow(new RuntimeException('Échec d’audit simulé.'));
+    app()->instance(AuditLogger::class, $audit);
+
+    expect(fn () => app(AccountAdministration::class)->resetMultiFactor($target, 'Tentative de réinitialisation.', $actor))
+        ->toThrow(RuntimeException::class);
+
+    $target->refresh();
+
+    expect($target->app_authentication_secret)->not->toBeNull()
+        ->and($target->remember_token)->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $target->id)->count())->toBe(1);
+});
+
+it('rolls back a reactivation when the audit write fails', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->inactive()->create();
+    $initialToken = $target->remember_token;
+    insertSessionFor($target, 'session-rollback-reactivate');
+
+    $audit = Mockery::mock(AuditLogger::class);
+    $audit->shouldReceive('record')->andThrow(new RuntimeException('Échec d’audit simulé.'));
+    app()->instance(AuditLogger::class, $audit);
+
+    expect(fn () => app(AccountAdministration::class)->reactivate($target, 'Tentative de réactivation.', $actor))
+        ->toThrow(RuntimeException::class);
+
+    $target->refresh();
+
+    expect($target->is_active)->toBeFalse()
+        ->and($target->remember_token)->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $target->id)->count())->toBe(1);
+});
+
+it('rolls back a session revocation when the audit write fails', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $initialToken = $target->remember_token;
+    insertSessionFor($target, 'session-rollback-revoke');
+
+    $audit = Mockery::mock(AuditLogger::class);
+    $audit->shouldReceive('record')->andThrow(new RuntimeException('Échec d’audit simulé.'));
+    app()->instance(AuditLogger::class, $audit);
+
+    expect(fn () => app(AccountAdministration::class)->revokeSessions($target, 'Tentative de révocation.', $actor))
+        ->toThrow(RuntimeException::class);
+
+    $target->refresh();
+
+    expect($target->remember_token)->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $target->id)->count())->toBe(1);
+});
+
 it('prevents self administration and protects the last Bureau account', function () {
     $bureau = User::factory()->bureauDirection()->create();
     $inactiveBureau = User::factory()->bureauDirection()->inactive()->create();
@@ -231,6 +421,10 @@ it('bootstraps the first Bureau account through the CLI and then closes the door
     expect($bureau->role)->toBe(Role::BureauDirection)
         ->and($bureau->activated_at)->toBeNull();
 
+    $this->assertDatabaseHas('system_locks', [
+        'name' => 'bootstrap.bureau_direction',
+    ]);
+
     Notification::assertSentTo($bureau, AccountActivationNotification::class);
 
     $this->artisan('planning:bootstrap-bureau', [
@@ -250,6 +444,45 @@ it('refuses to bootstrap over an existing non-Bureau account', function () {
         '--name' => 'Technique',
         '--confirm' => true,
     ])->assertExitCode(1);
+
+    $this->assertDatabaseMissing('system_locks', ['name' => 'bootstrap.bureau_direction']);
+});
+
+it('refuses bootstrap when the durable lock marker exists without a Bureau account', function () {
+    DB::table('system_locks')->insert([
+        'name' => 'bootstrap.bureau_direction',
+        'created_at' => now(),
+    ]);
+
+    expect(fn () => app(AccountProvisioner::class)->bootstrapBureauDirection('Direction', 'direction@example.test'))
+        ->toThrow(RuntimeException::class);
+
+    $this->assertDatabaseMissing('users', ['email' => 'direction@example.test']);
+});
+
+it('enforces the bootstrap lock with a database unique key', function () {
+    $lock = [
+        'name' => 'bootstrap.bureau_direction',
+        'created_at' => now(),
+    ];
+
+    DB::table('system_locks')->insert($lock);
+
+    expect(DB::table('system_locks')->insertOrIgnore($lock))->toBe(0);
+});
+
+it('rolls back the bootstrap user and lock when the audit write fails', function () {
+    Notification::fake();
+    config(['planning.audit.key' => 'trop-court']);
+
+    $this->artisan('planning:bootstrap-bureau', [
+        'email' => 'rollback@example.test',
+        '--name' => 'Rollback Direction',
+        '--confirm' => true,
+    ])->assertExitCode(1);
+
+    $this->assertDatabaseMissing('users', ['email' => 'rollback@example.test']);
+    $this->assertDatabaseMissing('system_locks', ['name' => 'bootstrap.bureau_direction']);
 });
 
 it('resets a lost second factor through an authorized CLI action', function () {
@@ -284,6 +517,68 @@ it('revokes all sessions during an emergency lockdown without granting access', 
     $this->assertDatabaseHas('audit_events', [
         'action' => AuditAction::EmergencyLockdown->value,
     ]);
+});
+
+it('refuses emergency lockdown without explicit confirmation', function () {
+    $user = User::factory()->bureauDirection()->create();
+    insertSessionFor($user, 'session-no-confirm');
+
+    $this->artisan('planning:emergency-lockdown')->assertExitCode(1);
+
+    expect(DB::table('sessions')->count())->toBe(1);
+
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::EmergencyLockdown->value,
+    ]);
+});
+
+it('refuses emergency lockdown when the audit configuration is invalid', function () {
+    $user = User::factory()->bureauDirection()->create();
+    insertSessionFor($user, 'session-invalid-audit');
+    config(['planning.audit.key' => 'trop-court']);
+
+    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])->assertExitCode(1);
+
+    expect(DB::table('sessions')->count())->toBe(1);
+
+    $this->assertDatabaseMissing('audit_events', [
+        'action' => AuditAction::EmergencyLockdown->value,
+    ]);
+});
+
+it('rotates every remember token during emergency lockdown', function () {
+    $users = User::factory()->count(3)->bureauDirection()->create();
+    $initialTokens = $users->mapWithKeys(
+        static fn (User $user): array => [$user->id => $user->remember_token],
+    );
+
+    foreach ($users as $index => $user) {
+        insertSessionFor($user, 'session-lockdown-'.$index);
+    }
+
+    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])->assertExitCode(0);
+
+    expect(DB::table('sessions')->count())->toBe(0);
+
+    foreach ($users as $user) {
+        expect($user->fresh()->remember_token)->not->toBe($initialTokens[$user->id]);
+    }
+});
+
+it('rolls back emergency lockdown when the audit write fails', function () {
+    $user = User::factory()->bureauDirection()->create();
+    $initialToken = $user->remember_token;
+    insertSessionFor($user, 'session-lockdown-rollback');
+
+    $audit = Mockery::mock(AuditLogger::class);
+    $audit->shouldReceive('assertConfigured')->once();
+    $audit->shouldReceive('record')->once()->andThrow(new RuntimeException('Échec d’audit simulé.'));
+    app()->instance(AuditLogger::class, $audit);
+
+    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])->assertExitCode(1);
+
+    expect(DB::table('sessions')->count())->toBe(1)
+        ->and($user->fresh()->remember_token)->toBe($initialToken);
 });
 
 it('configures a fifteen minute session and a single-use password reset token', function () {

@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Access\ApprovalRules;
 use App\Services\Access\PermissionExceptionService;
 use App\Services\Audit\AuditLogger;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 it('applies the approved role matrix on the server', function () {
@@ -237,4 +238,101 @@ it('keeps the audit trail for exception grants and revocations', function () {
         'action' => AuditAction::PermissionExceptionRevoked->value,
         'subject_id' => (string) $target->id,
     ]);
+});
+
+it('refuses a second active exception for the same user and permission', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $service = app(PermissionExceptionService::class);
+
+    $service->grant(
+        $target,
+        Permission::PlanningPropose,
+        'Premier renfort temporaire.',
+        now()->addDays(10),
+        $actor,
+    );
+
+    expect(fn () => $service->grant(
+        $target,
+        Permission::PlanningPropose,
+        'Second renfort temporaire.',
+        now()->addDays(5),
+        $actor,
+    ))->toThrow(RuntimeException::class);
+
+    expect(PermissionException::query()->where('user_id', $target->id)->count())->toBe(1);
+});
+
+it('refuses a second revocation of the same exception', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $service = app(PermissionExceptionService::class);
+
+    $exception = $service->grant(
+        $target,
+        Permission::PlanningPropose,
+        'Renfort temporaire révocable.',
+        now()->addDays(10),
+        $actor,
+    );
+
+    $service->revoke($exception, 'Première révocation légitime.', $actor);
+    $revokedAt = $exception->fresh()->revoked_at;
+
+    expect(fn () => $service->revoke($exception->fresh(), 'Seconde révocation interdite.', $actor))
+        ->toThrow(RuntimeException::class);
+
+    expect($exception->fresh()->revoked_at->equalTo($revokedAt))->toBeTrue()
+        ->and(DB::table('audit_events')
+            ->where('action', AuditAction::PermissionExceptionRevoked->value)
+            ->count())->toBe(1);
+});
+
+it('rolls back an exception grant when the audit write fails', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+
+    $audit = Mockery::mock(AuditLogger::class);
+    $audit->shouldReceive('record')->andThrow(new RuntimeException('Échec d’audit simulé.'));
+    app()->instance(AuditLogger::class, $audit);
+
+    expect(fn () => app(PermissionExceptionService::class)->grant(
+        $target,
+        Permission::PlanningPropose,
+        'Renfort avec audit défaillant.',
+        now()->addDays(10),
+        $actor,
+    ))->toThrow(RuntimeException::class);
+
+    expect(PermissionException::query()->where('user_id', $target->id)->count())->toBe(0);
+});
+
+it('rolls back an exception revocation when the audit write fails', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $service = app(PermissionExceptionService::class);
+
+    $exception = $service->grant(
+        $target,
+        Permission::PlanningPropose,
+        'Renfort temporaire à révoquer.',
+        now()->addDays(10),
+        $actor,
+    );
+
+    $audit = Mockery::mock(AuditLogger::class);
+    $audit->shouldReceive('record')->andThrow(new RuntimeException('Échec d’audit simulé.'));
+    app()->instance(AuditLogger::class, $audit);
+
+    expect(fn () => app(PermissionExceptionService::class)->revoke(
+        $exception->fresh(),
+        'Révocation avec audit défaillant.',
+        $actor,
+    ))->toThrow(RuntimeException::class);
+
+    expect($exception->fresh()->revoked_at)->toBeNull()
+        ->and(DB::table('audit_events')
+            ->where('action', AuditAction::PermissionExceptionRevoked->value)
+            ->count())->toBe(0);
 });

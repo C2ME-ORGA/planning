@@ -19,6 +19,10 @@ Comportement :
 
 - refuse si un compte Bureau/Direction existe déjà ;
 - refuse si l'adresse e-mail est déjà utilisée ;
+- réserve le bootstrap de façon atomique via la clé primaire de
+  `system_locks` : deux exécutions concurrentes ne peuvent pas créer deux
+  premiers comptes. Le marqueur reste en base après succès et ferme
+  définitivement le bootstrap ;
 - crée un compte sans mot de passe utilisable (mot de passe aléatoire jamais
   communiqué) ;
 - envoie un lien d'activation à usage unique dont la durée est fixée par
@@ -42,6 +46,14 @@ Après activation, la 2FA TOTP est exigée à la première connexion.
 - Nul ne peut modifier son propre rôle ni se désactiver soi-même.
 - L'Administrateur technique ne peut pas créer de compte, changer de rôle ni
   s'attribuer le rôle Bureau/Direction.
+- Les opérations sensibles sont transactionnelles et verrouillent la ligne du
+  compte concerné. Les changements de rôle et désactivations verrouillent aussi
+  l'ensemble des comptes Bureau/Direction actifs, dans un ordre stable, afin de
+  ne jamais retirer les deux derniers simultanément.
+- La révocation des sessions est atomique pour le pilote `database`. Avec un
+  pilote `file` ou `redis`, la suppression en base ne révoque pas la session
+  réelle : le filtre serveur `EnsureAccountIsActive` reste alors le seul
+  garde-fou immédiat.
 
 ## 3. Double authentification
 
@@ -90,6 +102,11 @@ Règles :
 - durée maximale de 12 mois, révocable à tout moment, à revoir annuellement ;
 - une exception ne contourne jamais les règles S02/S03 (non définies dans le
   dépôt à ce jour) et ne remplace pas la 2FA.
+- une création verrouille la ligne du compte bénéficiaire et revérifie le
+  doublon actif : deux créations concurrentes identiques sont sérialisées ;
+- une révocation verrouille la ligne de l'exception et revérifie son état :
+  deux révocations concurrentes ne produisent qu'une seule révocation et un
+  seul événement d'audit.
 
 ## 5. Journal d'audit
 
@@ -135,9 +152,17 @@ php artisan planning:audit:verify
 
 La commande valide d'abord la configuration de la clé (présence, longueur,
 distinction d'avec `APP_KEY`), puis renvoie un code d'échec si la séquence est
-discontinue, si un `previous_hash` ne correspond pas, si une signature est
-invalide ou si la clé d'un événement est inconnue. Elle ne répare rien : en cas
-d'échec, alerter, isoler la base et restaurer depuis une sauvegarde vérifiée.
+discontinue, dupliquée, si un `previous_hash` ne correspond pas, si une
+signature est invalide ou si la clé d'un événement est inconnue. Elle ne répare
+rien : en cas d'échec, alerter, isoler la base et restaurer depuis une
+sauvegarde vérifiée.
+
+Le parcours est paginé par `sequence`, jamais par `id` SQL, par lots de 500
+événements : les identifiants SQL peuvent ne pas suivre l'ordre logique, et le
+journal ne doit jamais être chargé intégralement en mémoire. Une vérification
+concurrente d'écritures reste possible : chaque lot voit un état cohérent, une
+écriture peut être incluse ou non, mais elle ne crée pas de fausse rupture de
+chaîne.
 
 L'Administrateur peut consulter `/admin/audit-events`, en lecture seule.
 
@@ -163,6 +188,13 @@ Révoque toutes les sessions et jetons persistants. La commande **n'accorde
 aucun droit** et ne constitue pas un break-glass. Les utilisateurs doivent se
 réauthentifier, 2FA comprise.
 
+La configuration d'audit est validée avant toute révocation. La révocation en
+base et l'événement d'audit sont ensuite dans une transaction commune : si
+l'audit échoue, les sessions et remember tokens sont restaurés. Cette garantie
+ne couvre que le pilote `database` ; des sessions `file` ou `redis` ne sont pas
+annulables par une transaction SQL et doivent être traitées par le pilote ou
+une procédure d'exploitation adaptée.
+
 ## 7. Vérifications avant mise en service
 
 - `php artisan migrate --pretend` relu, puis migration contrôlée.
@@ -173,6 +205,8 @@ réauthentifier, 2FA comprise.
   `SESSION_SECURE_COOKIE=true` en HTTPS.
 - Aucun compte de test, aucune donnée réelle, aucun secret dans le dépôt.
 - Les triggers d'audit sont présents (`SHOW TRIGGERS`).
+- La table `system_locks` est migrée et le marqueur
+  `bootstrap.bureau_direction` est absent avant le premier amorçage.
 - Le transport e-mail réel est configuré et testé (`MAIL_MAILER`, hôte,
   identifiants, `MAIL_FROM_ADDRESS`) et `APP_URL` désigne l'URL publique :
   sans cela, les liens d'activation ne sont jamais reçus ou pointent vers le

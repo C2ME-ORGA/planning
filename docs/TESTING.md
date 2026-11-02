@@ -49,5 +49,27 @@ Les triggers MySQL d’audit ne sont pas supprimés dans les tests (le DDL MySQL
 valide implicitement les transactions). La détection de falsification est donc
 testée en insérant directement un événement dont la signature est invalide.
 
-Résultats de référence du lot 2 : 45 tests, 304 assertions, Pint et Larastan
-verts.
+## Durcissement concurrence et atomicité (PC1-52)
+
+- `tests/Feature/Audit/AuditLogTest.php` couvre la pagination par `sequence`
+  avec des identifiants SQL non corrélés, les séquences manquantes, les ruptures
+  de `previous_hash`, le journal vide et un volume de 1 200 événements parcouru
+  par lots bornés.
+- `tests/Feature/Access/AccountLifecycleTest.php` couvre le marqueur durable
+  `system_locks` du bootstrap, l’unicité de ce verrou, le rollback du compte et
+  du verrou en cas d’échec d’audit, la réactivation, le changement de rôle sans
+  doublon d’audit, la révocation de sessions, la réinitialisation MFA et les
+  rollbacks d’audit.
+- `tests/Feature/Access/RolePermissionMatrixTest.php` couvre le refus d’une
+  seconde exception active, la double révocation, et le rollback de création ou
+  de révocation lorsque l’audit échoue.
+- Le verrouillage est testé sur MySQL via `lockForUpdate()`, la clé primaire de
+  `system_locks` et des transactions réelles. La suite ne crée pas de processus
+  concurrents (pas de `pcntl` sous Windows) : la garantie multi-processus repose
+  sur les contraintes et verrous SQL documentés, pas sur un test de fork.
+- Les sessions `file`/`redis` ne peuvent pas être annulées par une transaction
+  SQL ; les tests utilisent le pilote `array` et vérifient la table `sessions`
+  ainsi que les remember tokens.
+
+Résultats de référence du lot 2 après durcissement : 76 tests, 397 assertions,
+Pint et Larastan verts.

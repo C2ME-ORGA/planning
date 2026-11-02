@@ -23,13 +23,16 @@ class AccountAdministration
         $this->assertReason($reason);
         $this->assertNotSelf($target, $actor, 'Un compte ne peut pas se désactiver lui-même.');
 
-        if (! $target->isActive()) {
-            throw new RuntimeException('Ce compte est déjà désactivé.');
-        }
-
-        $this->assertNotLastBureauDirection($target);
-
         DB::transaction(function () use ($target, $reason, $actor): void {
+            $this->lockActiveBureauDirections();
+            $target = $this->lockUser($target);
+
+            if (! $target->isActive()) {
+                throw new RuntimeException('Ce compte est déjà désactivé.');
+            }
+
+            $this->assertNotLastBureauDirection($target);
+
             $target->forceFill([
                 'is_active' => false,
                 'deactivated_at' => now(),
@@ -57,25 +60,29 @@ class AccountAdministration
         $this->assertReason($reason);
         $this->assertNotSelf($target, $actor, 'Un compte ne peut pas se réactiver lui-même.');
 
-        if ($target->isActive()) {
-            throw new RuntimeException('Ce compte est déjà actif.');
-        }
+        DB::transaction(function () use ($target, $reason, $actor): void {
+            $target = $this->lockUser($target);
 
-        $target->forceFill([
-            'is_active' => true,
-            'deactivated_at' => null,
-            'deactivation_reason' => null,
-        ])->save();
+            if ($target->isActive()) {
+                throw new RuntimeException('Ce compte est déjà actif.');
+            }
 
-        $this->audit->record(
-            AuditAction::AccountReactivated,
-            $target,
-            ['is_active' => ['old' => false, 'new' => true]],
-            $reason,
-            $actor,
-        );
+            $target->forceFill([
+                'is_active' => true,
+                'deactivated_at' => null,
+                'deactivation_reason' => null,
+            ])->save();
 
-        $this->sessions->revoke($target);
+            $this->audit->record(
+                AuditAction::AccountReactivated,
+                $target,
+                ['is_active' => ['old' => false, 'new' => true]],
+                $reason,
+                $actor,
+            );
+
+            $this->sessions->revoke($target);
+        });
     }
 
     public function changeRole(User $target, Role $role, User $actor): void
@@ -83,18 +90,42 @@ class AccountAdministration
         $this->assertCan($actor, Permission::RolesAssign);
         $this->assertNotSelf($target, $actor, 'Un compte ne peut pas modifier son propre rôle.');
 
-        if ($target->role === $role) {
-            return;
-        }
+        DB::transaction(function () use ($target, $role, $actor): void {
+            // Verrouille l'ensemble des comptes Bureau/Direction actifs avant
+            // la cible, dans un ordre stable, pour éviter qu'une rétrogradation
+            // et une désactivation concurrentes ne retirent les deux derniers.
+            $this->lockActiveBureauDirections();
+            $target = $this->lockUser($target);
 
-        if ($target->isBureauDirection() && $role !== Role::BureauDirection) {
-            $this->assertNotLastBureauDirection($target);
-        }
+            if ($target->role === $role) {
+                return;
+            }
 
-        $target->forceFill(['role' => $role])->save();
+            if ($target->isBureauDirection() && $role !== Role::BureauDirection) {
+                $this->assertNotLastBureauDirection($target);
+            }
 
-        // Le journal est écrit par UserObserver (acteur = utilisateur courant).
-        $this->sessions->revoke($target);
+            $oldRole = $target->role;
+
+            // saveQuietly() évite le doublon avec UserObserver : le service
+            // écrit lui-même l'événement avec l'acteur réel de l'opération.
+            $target->forceFill(['role' => $role])->saveQuietly();
+
+            $this->audit->record(
+                AuditAction::RoleChanged,
+                $target,
+                [
+                    'role' => [
+                        'old' => $oldRole->value,
+                        'new' => $role->value,
+                    ],
+                ],
+                null,
+                $actor,
+            );
+
+            $this->sessions->revoke($target);
+        });
     }
 
     public function resetMultiFactor(User $target, string $reason, User $actor): void
@@ -102,14 +133,20 @@ class AccountAdministration
         $this->assertCan($actor, Permission::AccountsUpdate);
         $this->assertReason($reason);
 
-        $target->forceFill([
-            'app_authentication_secret' => null,
-            'app_authentication_recovery_codes' => null,
-        ])->save();
+        DB::transaction(function () use ($target, $reason, $actor): void {
+            $target = $this->lockUser($target);
 
-        $this->sessions->revoke($target);
+            // saveQuietly() évite l'événement MfaDisabled de UserObserver :
+            // l'événement MfaReset ci-dessous porte l'acteur et le motif.
+            $target->forceFill([
+                'app_authentication_secret' => null,
+                'app_authentication_recovery_codes' => null,
+            ])->saveQuietly();
 
-        $this->audit->record(AuditAction::MfaReset, $target, [], $reason, $actor);
+            $this->sessions->revoke($target);
+
+            $this->audit->record(AuditAction::MfaReset, $target, [], $reason, $actor);
+        });
     }
 
     public function revokeSessions(User $target, string $reason, User $actor): void
@@ -117,15 +154,53 @@ class AccountAdministration
         $this->assertCan($actor, Permission::AccountsUpdate);
         $this->assertReason($reason);
 
-        $revoked = $this->sessions->revoke($target);
+        DB::transaction(function () use ($target, $reason, $actor): void {
+            $target = $this->lockUser($target);
 
-        $this->audit->record(
-            AuditAction::SessionsRevoked,
-            $target,
-            ['sessions_revoked' => $revoked],
-            $reason,
-            $actor,
-        );
+            $revoked = $this->sessions->revoke($target);
+
+            $this->audit->record(
+                AuditAction::SessionsRevoked,
+                $target,
+                ['sessions_revoked' => $revoked],
+                $reason,
+                $actor,
+            );
+        });
+    }
+
+    /**
+     * Recharge et verrouille la ligne du compte dans la transaction courante.
+     */
+    private function lockUser(User $target): User
+    {
+        $locked = User::query()
+            ->whereKey($target->getKey())
+            ->lockForUpdate()
+            ->first();
+
+        if (! $locked instanceof User) {
+            throw new RuntimeException('Ce compte est introuvable.');
+        }
+
+        return $locked;
+    }
+
+    /**
+     * Verrouille tous les comptes Bureau/Direction actifs dans un ordre stable.
+     *
+     * Ce verrou d'ensemble empêche deux transactions de retirer simultanément
+     * les deux derniers comptes Bureau/Direction actifs.
+     */
+    private function lockActiveBureauDirections(): void
+    {
+        User::query()
+            ->active()
+            ->bureauDirection()
+            ->select('id')
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
     }
 
     /**

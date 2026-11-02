@@ -6,6 +6,8 @@ use App\Enums\AuditAction;
 use App\Services\Accounts\SessionRevoker;
 use App\Services\Audit\AuditLogger;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
+use Throwable;
 
 /**
  * Procédure d'urgence : coupe toutes les sessions existantes.
@@ -27,14 +29,36 @@ class EmergencyLockdownCommand extends Command
             return self::FAILURE;
         }
 
-        $revoked = $sessions->revokeAll();
+        try {
+            $audit->assertConfigured();
+        } catch (Throwable $exception) {
+            $this->error('Configuration d’audit invalide : '.$exception->getMessage());
 
-        $audit->record(
-            AuditAction::EmergencyLockdown,
-            null,
-            ['sessions_revoked' => $revoked],
-            'Révocation globale des sessions via la procédure d’urgence.',
-        );
+            return self::FAILURE;
+        }
+
+        try {
+            // La transaction couvre la révocation en base et l’audit : si
+            // l’audit échoue, les sessions et remember tokens sont restaurés.
+            // Les sessions stockées hors base (file/redis) ne sont pas
+            // couvertes par ce rollback ; le pilote database est requis.
+            $revoked = DB::transaction(function () use ($sessions, $audit): int {
+                $revoked = $sessions->revokeAll();
+
+                $audit->record(
+                    AuditAction::EmergencyLockdown,
+                    null,
+                    ['sessions_revoked' => $revoked],
+                    'Révocation globale des sessions via la procédure d’urgence.',
+                );
+
+                return $revoked;
+            });
+        } catch (Throwable $exception) {
+            $this->error('Révocation annulée : '.$exception->getMessage());
+
+            return self::FAILURE;
+        }
 
         $this->info("{$revoked} session(s) révoquée(s). Aucun droit supplémentaire n’a été accordé.");
 
