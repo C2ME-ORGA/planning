@@ -90,11 +90,20 @@ class User extends Authenticatable implements FilamentUser, HasAppAuthentication
     /**
      * Vérifie une capacité côté serveur : compte actif, rôle, puis exception
      * temporaire non révoquée et non expirée.
+     *
+     * L'Administrateur technique est un rôle strictement borné : il ne reçoit
+     * que `AuditView`, et aucune exception de permission ne peut lui accorder
+     * un droit métier. La restriction est appliquée avant toute recherche
+     * d'exception en base.
      */
     public function hasPermission(Permission $permission): bool
     {
         if (! $this->isActive()) {
             return false;
+        }
+
+        if ($this->role === Role::Admin) {
+            return $permission === Permission::AuditView;
         }
 
         if ($this->role->hasPermission($permission)) {
