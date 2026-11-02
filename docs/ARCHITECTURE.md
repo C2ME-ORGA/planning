@@ -44,7 +44,8 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     `EnsureAccountIsActive` est prioritaire sur l'authentification Filament
     afin qu'un compte désactivé soit déconnecté (et non renvoyé en 403).
 -   **Comptes** : création par Bureau/Direction (`AccountProvisioner`), lien
-    d'activation à usage unique (`AccountActivation`, contrôleur dédié),
+    d'activation à usage unique valable 24 heures / 1 440 minutes
+    (`AccountActivation`, contrôleur dédié),
     désactivation avec révocation des sessions (`SessionRevoker`), réinitialisation
     de la 2FA en CLI. Aucune suppression physique.
 -   **Amorçage** : `planning:bootstrap-bureau` crée le premier Bureau/Direction,

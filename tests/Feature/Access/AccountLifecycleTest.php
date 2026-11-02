@@ -110,6 +110,44 @@ it('rejects weak passwords and expired or superseded activation links', function
         ->toThrow(RuntimeException::class);
 });
 
+it('uses the validated activation duration of 1440 minutes', function () {
+    expect(config('planning.accounts.activation_ttl_minutes'))->toBe(1440);
+});
+
+it('keeps an activation link valid at 23 hours 59 minutes 59 seconds', function () {
+    Notification::fake();
+    $this->freezeSecond();
+
+    $actor = User::factory()->bureauDirection()->create();
+    $user = app(AccountProvisioner::class)->create('Limite Haute', 'limite-haute@example.test', Role::Ouvrier, $actor);
+    $service = app(AccountActivationService::class);
+    $token = $service->send($user, $actor);
+
+    $this->travel(23)->hours();
+    $this->travel(59)->minutes();
+    $this->travel(59)->seconds();
+
+    expect($service->findUsable($token))->not->toBeNull();
+});
+
+it('expires an activation link at and after 24 hours', function () {
+    Notification::fake();
+    $this->freezeSecond();
+
+    $actor = User::factory()->bureauDirection()->create();
+    $user = app(AccountProvisioner::class)->create('Limite Basse', 'limite-basse@example.test', Role::Ouvrier, $actor);
+    $service = app(AccountActivationService::class);
+    $token = $service->send($user, $actor);
+
+    $this->travel(24)->hours();
+
+    expect($service->findUsable($token))->toBeNull();
+
+    $this->travel(1)->seconds();
+
+    expect($service->findUsable($token))->toBeNull();
+});
+
 it('immediately revokes sessions when an account is deactivated', function () {
     $actor = User::factory()->bureauDirection()->create();
     $target = User::factory()->ouvrier()->create();

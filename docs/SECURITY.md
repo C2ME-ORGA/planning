@@ -7,7 +7,7 @@
 - 2FA TOTP obligatoire (avec codes de récupération) pour tous les comptes du panneau Filament, donc pour Administrateur et Bureau/Direction. Le panneau est fermé aux autres rôles par `canAccessPanel()`.
 - Création de compte par Bureau/Direction uniquement ; pas d’inscription libre. L’Administrateur technique ne peut pas créer de compte.
 - Premier compte Bureau/Direction : amorçage exclusivement en CLI (`planning:bootstrap-bureau`), refusé si un compte Bureau/Direction existe déjà ou si l’adresse est déjà utilisée, avec lien d’activation à usage unique et audit à acteur système. Aucun contournement de la 2FA n’est possible.
-- Activation et réinitialisation via liens sécurisés à usage unique et durée limitée. La durée d’activation est configurable (valeur par défaut à valider) ; la réinitialisation de mot de passe reste à 60 minutes.
+- Activation et réinitialisation via liens sécurisés à usage unique et durée limitée. La durée d’activation est configurable et fixée à 24 heures (1 440 minutes) par l’arbitrage métier ; la réinitialisation de mot de passe reste à 60 minutes.
 - Session expirant après 15 minutes d’inactivité ; cookies sécurisés en production.
 - Désactivation avec révocation immédiate des sessions/tokens via la base de sessions ; un filtre serveur déconnecte en plus tout compte désactivé avant même l’authentification Filament. Historique conservé, aucun compte supprimé.
 - L’e-mail du compte est unique globalement (choix plus strict que « unique parmi les comptes actifs ») ; changements audités.

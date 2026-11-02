@@ -142,6 +142,47 @@ it('refuses exceptions that would bypass the validated rules', function () {
     ))->toThrow(RuntimeException::class);
 });
 
+it('uses the validated twelve-month exception limit', function () {
+    expect(config('planning.exceptions.max_duration_months'))->toBe(12);
+});
+
+it('accepts a permission exception valid for exactly twelve months', function () {
+    $this->freezeSecond();
+
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $expiresAt = now()->addMonths(12);
+
+    $exception = app(PermissionExceptionService::class)->grant(
+        $target,
+        Permission::PlanningPropose,
+        'Renfort exceptionnel sur douze mois.',
+        $expiresAt,
+        $actor,
+    );
+
+    expect($exception->expires_at->equalTo($expiresAt))->toBeTrue()
+        ->and($exception->isActive())->toBeTrue();
+});
+
+it('refuses a permission exception exceeding twelve months by one second', function () {
+    $this->freezeSecond();
+
+    $actor = User::factory()->bureauDirection()->create();
+    $target = User::factory()->ouvrier()->create();
+    $expiresAt = now()->addMonths(12)->addSecond();
+
+    expect(fn () => app(PermissionExceptionService::class)->grant(
+        $target,
+        Permission::PlanningPropose,
+        'Dépassement de la durée maximale.',
+        $expiresAt,
+        $actor,
+    ))->toThrow(RuntimeException::class);
+
+    expect(PermissionException::query()->where('user_id', $target->id)->count())->toBe(0);
+});
+
 it('requires a Bureau reason before approving its own production', function () {
     $rules = app(ApprovalRules::class);
     $bureau = User::factory()->bureauDirection()->create();

@@ -9,9 +9,8 @@ return [
     | Comptes
     |--------------------------------------------------------------------------
     |
-    | Durée de validité d'un lien d'activation. Valeur par défaut à confirmer
-    | lors de la validation humaine du lot 2 (elle n'est pas fixée par la
-    | spécification).
+    | Durée de validité d'un lien d'activation, fixée à 24 heures (1 440
+    | minutes) par l'arbitrage métier du lot 2.
     |
     */
 

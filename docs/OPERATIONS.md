@@ -22,8 +22,8 @@ Comportement :
 - crée un compte sans mot de passe utilisable (mot de passe aléatoire jamais
   communiqué) ;
 - envoie un lien d'activation à usage unique dont la durée est fixée par
-  `PLANNING_ACTIVATION_TTL_MINUTES` (1440 minutes par défaut, **valeur non
-  encore validée par le métier**) ;
+  `PLANNING_ACTIVATION_TTL_MINUTES` (1440 minutes, soit 24 heures, **valeur
+  validée par le métier**) ;
 - journalise l'opération avec un acteur `null` (système).
 
 Le lien doit être transmis par un canal sûr. Ne jamais le journaliser ni le
@@ -143,11 +143,15 @@ L'Administrateur peut consulter `/admin/audit-events`, en lecture seule.
 
 **Limite connue :** une personne disposant à la fois de la clé d'audit et d'un
 accès écriture direct à la base peut recalculer la chaîne. Les triggers MySQL
-bloquent `UPDATE` et `DELETE`, mais ne protègent pas contre un acteur disposant
-de ces deux secrets. La séparation des accès, la supervision et les sauvegardes
-sont indispensables. La rotation d'`APP_KEY` invalide en revanche la
-vérification des événements historiques qui en dépendent : elle doit être
-planifiée après la disparition de ces événements ou après ré-ancrage documenté.
+bloquent `UPDATE` et `DELETE`, mais ne protègent ni contre `TRUNCATE`/`DROP
+TABLE` ni contre un acteur disposant de ces deux secrets. Une vérification sur
+un journal vide est valide : la détection d'un vidage complet exige un ancrage
+externe (sauvegarde, supervision du volume et du dernier hash). La séparation
+des accès, la supervision et les sauvegardes sont indispensables ; le compte
+applicatif ne doit disposer ni de `DROP`, ni de `ALTER`, ni de `TRIGGER`. La
+rotation d'`APP_KEY` invalide en revanche la vérification des événements
+historiques qui en dépendent : elle doit être planifiée après la disparition de
+ces événements ou après ré-ancrage documenté.
 
 ## 6. Urgence et révocation de session
 
@@ -169,6 +173,11 @@ réauthentifier, 2FA comprise.
   `SESSION_SECURE_COOKIE=true` en HTTPS.
 - Aucun compte de test, aucune donnée réelle, aucun secret dans le dépôt.
 - Les triggers d'audit sont présents (`SHOW TRIGGERS`).
+- Le transport e-mail réel est configuré et testé (`MAIL_MAILER`, hôte,
+  identifiants, `MAIL_FROM_ADDRESS`) et `APP_URL` désigne l'URL publique :
+  sans cela, les liens d'activation ne sont jamais reçus ou pointent vers le
+  mauvais domaine, et l'amorçage reste inutilisable. `MAIL_MAILER=log` ne
+  convient qu'au développement local.
 - Au moins un compte Bureau/Direction actif et un second facteur configuré.
 
 ## 8. Points non couverts par le lot 2
@@ -177,6 +186,5 @@ réauthentifier, 2FA comprise.
   du dépôt, interprétés de façon conservatrice.
 - Politique de conservation, sauvegardes chiffrées, supervision et procédure
   de restauration : lot 11.
-- Validation métier de la durée d'activation (1440 minutes par défaut).
 - Aucun module de planning, de relevé ou d'absence n'est encore implémenté ;
   les permissions correspondantes sont posées mais non exercées par une UI.

@@ -92,7 +92,7 @@ technique ne peut ni créer de compte ni s'attribuer le rôle Bureau/Direction.
 Variables utiles :
 
 ```dotenv
-# Durée du lien d'activation (minutes). Valeur par défaut à valider.
+# Durée du lien d'activation (minutes) : 24 heures validées.
 PLANNING_ACTIVATION_TTL_MINUTES=1440
 # Durée maximale d'une exception de permission (mois).
 PLANNING_EXCEPTION_MAX_MONTHS=12
