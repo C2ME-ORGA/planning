@@ -19,6 +19,7 @@ enum AuditAction: string
     case AccountDeactivated = 'account.deactivated';
     case AccountReactivated = 'account.reactivated';
     case SessionsRevoked = 'account.sessions_revoked';
+    case SessionRevocationFailed = 'account.session_revocation_failed';
     case MfaEnabled = 'account.mfa_enabled';
     case MfaDisabled = 'account.mfa_disabled';
     case MfaReset = 'account.mfa_reset';
@@ -72,6 +73,7 @@ enum AuditAction: string
 
     case SelfApprovalRecorded = 'approval.self_approval_recorded';
 
+    case EmergencyLockdownRequested = 'system.emergency_lockdown_requested';
     case EmergencyLockdown = 'system.emergency_lockdown';
 
     public function label(): string
@@ -91,6 +93,7 @@ enum AuditAction: string
             self::AccountDeactivated => 'Compte désactivé',
             self::AccountReactivated => 'Compte réactivé',
             self::SessionsRevoked => 'Sessions révoquées',
+            self::SessionRevocationFailed => 'Échec de révocation des sessions',
             self::MfaEnabled => 'Double authentification activée',
             self::MfaDisabled => 'Double authentification désactivée',
             self::MfaReset => 'Double authentification réinitialisée',
@@ -136,6 +139,7 @@ enum AuditAction: string
             self::TimesheetOverlapReviewAccepted => 'Chevauchement accepté',
             self::TimesheetOverlapReviewRejected => 'Chevauchement rejeté',
             self::SelfApprovalRecorded => 'Auto-validation motivée',
+            self::EmergencyLockdownRequested => 'Verrouillage d’urgence demandé',
             self::EmergencyLockdown => 'Verrouillage d’urgence',
         };
     }

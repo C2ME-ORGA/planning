@@ -26,6 +26,14 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('authentication_state');
+        // Supprimer cette table réinitialiserait la génération globale et
+        // pourrait rendre valides des sessions d'une génération antérieure.
+        // Un retour arrière doit être manuel, après purge des sessions et
+        // rotation des jetons persistants, avec le code PC1-12 hors service.
+        throw new RuntimeException(
+            'La table authentication_state ne peut pas être supprimée automatiquement : '
+            .'un rollback réinitialiserait la génération globale. '
+            .'Utilisez la procédure de retour arrière documentée.',
+        );
     }
 };

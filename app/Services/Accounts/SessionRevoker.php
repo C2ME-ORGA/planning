@@ -29,35 +29,49 @@ class SessionRevoker
 
     public function revoke(User $user): SessionRevocationResult
     {
-        // UPDATE unique et atomique sur la connexion des utilisateurs : la
-        // version et le jeton persistants basculent ensemble.
-        $updated = User::query()
-            ->whereKey($user->getKey())
-            ->update([
-                'remember_token' => Str::random(60),
-                'session_version' => DB::raw('session_version + 1'),
-            ]);
+        try {
+            // L'UPDATE et la relecture forment une seule unité logique : si la
+            // lecture échoue après l'UPDATE, la transaction annule les deux.
+            // Depuis une transaction métier existante, Laravel utilise un
+            // savepoint et l'appelant conserve la maîtrise du rollback global.
+            $version = DB::transaction(function () use ($user): int {
+                $updated = User::query()
+                    ->whereKey($user->getKey())
+                    ->update([
+                        'remember_token' => Str::random(60),
+                        'session_version' => DB::raw('session_version + 1'),
+                    ]);
 
-        if ($updated !== 1) {
-            throw new RuntimeException('Le compte à révoquer est introuvable.');
+                if ($updated !== 1) {
+                    throw new RuntimeException('Le compte à révoquer est introuvable.');
+                }
+
+                $version = User::query()->whereKey($user->getKey())->value('session_version');
+
+                if ($version === null) {
+                    throw new RuntimeException('La version de session du compte est introuvable.');
+                }
+
+                return (int) $version;
+            });
+        } catch (Throwable $exception) {
+            throw new SessionRevocationException('user', 'logical', $exception);
         }
 
-        $version = User::query()->whereKey($user->getKey())->value('session_version');
-
-        if ($version === null) {
-            throw new RuntimeException('La version de session du compte est introuvable.');
-        }
-
-        return $this->buildResult('user', (int) $version, $this->purgeSessions($user->getKey()));
+        return $this->buildResult('user', $version, $this->purgeSessions($user->getKey()));
     }
 
     public function revokeAll(): SessionRevocationResult
     {
-        // Étape critique : génération globale et invalidation de tous les
-        // cookies remember-me dans une seule transaction. Une interruption
-        // après le commit laisse déjà toutes les anciennes authentifications
-        // inutilisables.
-        $generation = $this->generation->revokeAll();
+        try {
+            // Étape critique : génération globale et invalidation de tous les
+            // cookies remember-me dans une seule transaction. Une interruption
+            // après le commit laisse déjà toutes les anciennes authentifications
+            // inutilisables.
+            $generation = $this->generation->revokeAll();
+        } catch (Throwable $exception) {
+            throw new SessionRevocationException('global', 'logical', $exception);
+        }
 
         return $this->buildResult('global', $generation, $this->purgeSessions(null));
     }

@@ -239,7 +239,11 @@ it('revokes all sessions during an emergency lockdown without granting access', 
     $user = User::factory()->bureauDirection()->create();
     insertSessionFor($user, 'session-emergency');
 
-    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])->assertExitCode(0);
+    $this->artisan('planning:emergency-lockdown', [
+        '--actor' => $user->email,
+        '--reason' => 'Verrouillage demandé après incident de sécurité.',
+        '--confirm' => true,
+    ])->assertExitCode(0);
 
     expect(DB::table('sessions')->count())->toBe(0);
 

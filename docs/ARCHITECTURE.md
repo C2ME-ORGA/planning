@@ -48,22 +48,35 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     désactivation avec révocation des sessions (`SessionRevoker`), réinitialisation
     de la 2FA en CLI. Aucune suppression physique.
 -   **Révocation individuelle** : `SessionRevoker` incrémente
-    `users.session_version` et renouvelle `remember_token` dans un même UPDATE
-    avant de tenter le nettoyage physique. Une panne de nettoyage ne remet pas
-    en cause l'invalidation logique ; elle est reportée dans l'audit.
+    `users.session_version` et renouvelle `remember_token` dans un même UPDATE,
+    avec relecture de contrôle dans la même transaction, avant de tenter le
+    nettoyage physique. Une panne de relecture annule l’UPDATE. Une panne de
+    nettoyage ne remet pas en cause l'invalidation logique ; elle est reportée
+    dans l'audit avec l'état `completed`, `failed` ou `not_applicable`.
 -   **Révocation globale** : `authentication_state.global_generation` est
     incrémentée et tous les `remember_token` sont mis à `NULL` dans une même
     transaction, sans charger les comptes en mémoire. Le nettoyage SQL des
-    sessions intervient ensuite et reste secondaire.
+    sessions intervient ensuite et reste secondaire. La génération est lue sur
+    la connexion d'écriture.
 -   **Contrôle des sessions** : `EnsureAccountIsActive` exige les marqueurs
     `auth.session_version` et `auth.global_generation`. Il capture la génération
     avant la résolution de l'utilisateur afin de détecter une révocation
     concurrente, y compris pendant une authentification remember-me. Une
-    session sans marqueur est refusée.
+    session sans marqueur est refusée. Une session obsolète d'un compte actif
+    est déconnectée de l'appareil courant sans renouveler le jeton des autres
+    appareils ; un compte désactivé subit la rotation défensive complète.
 -   **Pilotes** : la suppression SQL cible `session.connection` /
     `session.table` et n'est requise que pour le pilote `database`. Avec
     `file`, `redis` ou un autre pilote, l'invalidation logique est la garantie ;
     l'absence de table SQL n'empêche jamais la révocation.
+-   **Audit des échecs** : une invalidation logique échouée produit
+    `account.session_revocation_failed` avec acteur, motif, périmètre et étape.
+    Le changement de rôle journalise séparément la révocation des sessions et
+    son état de nettoyage. Le verrouillage global écrit un événement
+    d'intention avant l'action, puis un événement final avec la génération.
+-   **Migrations** : `authentication_state` refuse son rollback destructif. Le
+    préflight `planning:security:install` applique ou vérifie les deux
+    migrations de sécurité indépendamment des migrations métier.
 -   **Amorçage** : `planning:bootstrap-bureau` crée le premier Bureau/Direction,
     refuse si un tel compte existe déjà, puis se ferme. Aucune élévation de
     privilège par la CLI : chaque commande sensible exige `--actor` avec la

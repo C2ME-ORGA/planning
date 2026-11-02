@@ -27,12 +27,15 @@ class AuthenticationGeneration
 
     public function current(): int
     {
+        // Lecture forcée sur la connexion d'écriture : une réplique en retard
+        // ne doit jamais servir une ancienne génération.
         $generation = DB::table(self::TABLE)
+            ->useWritePdo()
             ->where('id', self::SINGLETON_ID)
             ->value('global_generation');
 
-        if ($generation === null) {
-            throw new RuntimeException('La génération globale d’authentification est introuvable.');
+        if ($generation === null || (int) $generation < 1) {
+            throw new RuntimeException('La génération globale d’authentification est invalide ou introuvable.');
         }
 
         return (int) $generation;
@@ -47,6 +50,10 @@ class AuthenticationGeneration
     public function revokeAll(): int
     {
         return DB::transaction(function (): int {
+            // Refuse une valeur corrompue avant l'incrément : revenir à une
+            // génération antérieure ne doit jamais être possible par accident.
+            $this->current();
+
             $updated = DB::table(self::TABLE)
                 ->where('id', self::SINGLETON_ID)
                 ->update([

@@ -46,7 +46,9 @@ Les tests automatisés utilisent une base MySQL dédiée et jetable, `planning_c
   globale, génération globale, remember-me réellement rejoué, pilotes `file` et
   `database`, connexion dédiée, panne du nettoyage physique sans perte de
   sécurité, sessions Filament et Livewire, marqueurs absents/invalides,
-  concurrence login/révocation et recalcul des permissions.
+  concurrence login/révocation, échecs logiques audités, rollback de migration
+  refusé, préflight de sécurité, logout local sans rotation des autres
+  appareils et recalcul des permissions.
 - `tests/Feature/Audit/AuditLogTest.php` : chaîne, séquence, clé d’audit dédiée,
   rotation de clé, événements historiques `APP_KEY`, expurgation, détection
   d’une signature invalide et commande de vérification.
@@ -58,8 +60,18 @@ testée en insérant directement un événement dont la signature est invalide.
 Résultats de référence du lot 2 : 45 tests, 304 assertions, Pint et Larastan
 verts.
 
-Résultats PC1-12 (02/11/2026) : 611 tests pertinents exécutés (610 réussis,
-1 ignoré, 3228 assertions), Pint et PHPStan verts sur le périmètre modifié.
+Résultats PC1-12 (02/11/2026) : 634 tests pertinents exécutés (633 réussis,
+1 ignoré, 3384 assertions), Pint et PHPStan verts sur le périmètre modifié.
+
+Les simulations de panne SQL utilisent `DB::beforeExecuting()`, qui échoue
+avant l’exécution de la requête. Le test d’entrelacement de sortie salarié
+conserve volontairement `DB::listen()` : il ne simule pas une panne, mais une
+écriture concurrente après une relecture.
+
+Le test ignoré est le contrôle de lien symbolique SQLite de
+`DemoDatasetTest`, sans rapport avec PC1-12 : `symlink()` n’est pas disponible
+sur cet environnement Windows sans privilège particulier. Il doit être exécuté
+sur un runner Linux.
 
 ## Couverture du lot 3 (26/10/2026)
 

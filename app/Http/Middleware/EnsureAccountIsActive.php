@@ -47,7 +47,15 @@ class EnsureAccountIsActive
             || $generationChanged
             || $this->sessionIsStale($request, $user, $generationAtStart)
         )) {
-            Auth::guard()->logout();
+            if ($user->is_active) {
+                // Session obsolète d'un compte encore actif : le jeton
+                // remember-me a déjà été invalidé par la révocation. On ne
+                // renouvelle pas celui des autres appareils.
+                Auth::guard()->logoutCurrentDevice();
+            } else {
+                // Compte désactivé : rotation défensive du jeton persistant.
+                Auth::guard()->logout();
+            }
 
             $request->session()->invalidate();
             $request->session()->regenerateToken();
