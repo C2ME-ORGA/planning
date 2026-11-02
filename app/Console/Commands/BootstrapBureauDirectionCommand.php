@@ -1,32 +1,35 @@
 <?php
 
-namespace App\Console\Commands;
+namespace App\\Console\\Commands;
 
-use App\Services\Accounts\AccountProvisioner;
-use Illuminate\Console\Command;
+use App\\Console\\Commands\\Concerns\\ResolvesCliActor;
+use App\\Enums\\Permission;
+use App\\Enums\\Role;
+use App\\Models\\User;
+use App\\Services\\Accounts\\AccountProvisioner;
+use Illuminate\\Console\\Command;
 use Throwable;
 
 /**
- * Initialisation contrôlée du premier compte Bureau / Direction.
- *
- * La commande est réservée à un accès serveur (CLI), exige une confirmation
- * explicite, refuse toute promotion d'un compte existant et se ferme dès
- * qu'un compte Bureau / Direction existe. Aucun rôle n'est accordé depuis
- * l'interface d'administration technique.
+ * Amorçage du premier compte ou création contrôlée d'un compte suppléant.
  */
 class BootstrapBureauDirectionCommand extends Command
 {
+    use ResolvesCliActor;
+
     protected $signature = 'planning:bootstrap-bureau
-        {email : Adresse e-mail du premier compte Bureau / Direction}
+        {email : Adresse e-mail du compte Bureau / Direction}
         {--name= : Nom affiché}
+        {--additional : Crée un compte supplémentaire, autorisé par un compte Bureau / Direction existant}
+        {--actor= : Adresse e-mail du compte Bureau / Direction qui autorise la création supplémentaire}
         {--confirm : Confirme la création du compte}';
 
-    protected $description = 'Crée le premier compte Bureau / Direction et envoie son lien d’activation.';
+    protected $description = 'Crée le premier compte Bureau / Direction ou un compte supplémentaire autorisé.';
 
     public function handle(AccountProvisioner $accounts): int
     {
         if (! $this->option('confirm')) {
-            $this->error('Ajoutez --confirm pour créer le premier compte Bureau / Direction.');
+            $this->error('Ajoutez --confirm pour confirmer la création du compte.');
 
             return self::FAILURE;
         }
@@ -47,7 +50,31 @@ class BootstrapBureauDirectionCommand extends Command
         }
 
         try {
-            $user = $accounts->bootstrapBureauDirection($name, $email);
+            if ($this->option('additional')) {
+                $actor = $this->resolveActorWith(Permission::AccountsCreate);
+
+                if (! $actor instanceof User || $actor->role !== Role::BureauDirection) {
+                    $this->error('La création supplémentaire exige un acteur Bureau / Direction actif.');
+
+                    return self::FAILURE;
+                }
+
+                if (! $actor->hasPermission(Permission::RolesAssign)) {
+                    $this->error('Ce compte ne peut pas attribuer le rôle Bureau / Direction.');
+
+                    return self::FAILURE;
+                }
+
+                $user = $accounts->create($name, $email, Role::BureauDirection, $actor);
+            } else {
+                if (trim((string) $this->option('actor')) !== '') {
+                    $this->error('L’option --actor est réservée au mode --additional.');
+
+                    return self::FAILURE;
+                }
+
+                $user = $accounts->bootstrapBureauDirection($name, $email);
+            }
         } catch (Throwable $exception) {
             $this->error($exception->getMessage());
 
