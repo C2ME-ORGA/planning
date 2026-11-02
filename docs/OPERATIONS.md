@@ -31,6 +31,34 @@ coller dans un ticket.
 
 Après activation, la 2FA TOTP est exigée à la première connexion.
 
+### Création d'un compte Bureau / Direction supplémentaire
+
+Le mode initial ci-dessus reste réservé au premier compte. Pour créer un compte
+supplémentaire (notamment un compte suppléant), un compte Bureau / Direction
+actif doit autoriser l'opération :
+
+```bash
+php artisan planning:bootstrap-bureau suppleant@example.test \
+    --name="Nom du suppléant" \
+    --additional \
+    --actor=direction@example.test \
+    --confirm
+```
+
+Règles :
+
+- l'acteur doit être un compte actif ayant les capacités de création de compte
+  et d'attribution de rôle, et son rôle doit être Bureau / Direction ;
+- l'adresse e-mail doit être unique ; aucun compte existant n'est promu ;
+- le nouveau compte reçoit le rôle Bureau / Direction standard, sans privilège
+  supplémentaire ;
+- la création et son acteur sont inscrits au journal d'audit ;
+- un lien d'activation à usage unique est envoyé ; le titulaire définit lui-même
+  son mot de passe ;
+- la 2FA TOTP reste obligatoire à la première connexion.
+
+Ne jamais partager les identifiants du titulaire principal ou du suppléant.
+
 ## 2. Gestion des comptes
 
 - Création, changement de rôle, désactivation et réactivation : panneau
