@@ -33,6 +33,9 @@
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="SESSION_LIFETIME" value="15"/>
+        <env name="PLANNING_AUDIT_KEY_ID" value="test-audit-v1"/>
+        <env name="PLANNING_AUDIT_KEY" value="test-only-audit-key-0123456789abcdef0123456789abcdef"/>
+        <env name="PLANNING_AUDIT_PREVIOUS_KEYS" value="{}"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
