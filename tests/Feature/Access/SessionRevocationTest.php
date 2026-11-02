@@ -1167,3 +1167,11 @@ it('recalculates permissions from the current role and exceptions after reactiva
     expect($target->fresh()->hasPermission(Permission::PlanningPropose))->toBeFalse()
         ->and($expired->fresh()->isActive())->toBeFalse();
 });
+
+
+it('refuses to drop the session version column during a migration rollback', function () {
+    $migration = require database_path('migrations/2026_11_02_000001_add_session_version_to_users_table.php');
+
+    expect(fn () => $migration->down())->toThrow(RuntimeException::class)
+        ->and(Schema::hasColumn('users', 'session_version'))->toBeTrue();
+});
