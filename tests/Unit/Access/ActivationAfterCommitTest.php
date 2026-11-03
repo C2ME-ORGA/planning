@@ -86,7 +86,7 @@ it('keeps activation persisted and logs safely when mail transport fails after c
     Log::shouldHaveReceived('error')->once()->withArgs(
         function ($message, $context = []) use ($token): bool {
             return ! str_contains((string) $message, $token)
-                && !str_contains((string) json_encode($context), $token);
+                && ! str_contains((string) json_encode($context), $token);
         },
     );
 });
