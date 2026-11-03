@@ -604,3 +604,40 @@ php artisan test tests/Feature/Timesheets tests/Unit/LocalDateTimeResolverTest.p
 Résultats observés localement : 322 tests ciblés réussis (1 247 assertions),
 puis suite complète à 607 tests dont 606 réussis et 1 ignoré (3 209
 assertions). Pint `--test` est vert et PHPStan ne remonte aucune erreur.
+
+
+## PC1-14 — Vérification périodique de la suppléance
+
+Contrôle tous les trois mois et après toute évolution importante de l'authentification, des rôles ou des permissions. Responsable : personne physique habilitée utilisant le compte de référence `direction@c2me.ovh`, avec participation de Corentin Doizy.
+
+| Contrôle | Résultat attendu | Preuve |
+|---|---|---|
+| Compte `c.doizy@c2me.ovh` | Actif et nominatif | Fiche datée |
+| Authentification | Connexion et MFA opérationnelles | Résultat sans secret |
+| Rôle | Bureau / Direction standard | Vérification des droits |
+| Permissions | Conformes au rôle attendu | Liste/version de référence |
+| Continuité | Accès aux fonctions nécessaires | Test non destructif |
+| Audit | Actions attribuées au bon compte | Références d'événements |
+| Titulaire principal | Accès indépendants maintenus | Résultat de vérification |
+| Retour normal | Aucun changement indu | Clôture de la fiche |
+
+Ne pas lancer `planning:emergency-lockdown` en production pour tester la suppléance : cette commande révoque toutes les sessions. Ne pas réaliser d'opération métier réelle ou destructive uniquement pour les tests.
+
+### Modèle de fiche de contrôle
+
+- Date :
+- Contrôleur (nom et fonction) :
+- Participant :
+- Version / commit de l'application :
+- Compte suppléant actif : Oui / Non
+- Connexion et MFA : Réussi / Échec
+- Rôle et permissions : Conforme / Non conforme
+- Test de prise de relais non destructif : Réussi / Échec / Non réalisé
+- Journal d'audit vérifié : Oui / Non
+- Accès du titulaire principal vérifiés : Oui / Non
+- Anomalies :
+- Actions correctives, responsable et échéance :
+- Conclusion :
+- Date de clôture et visa du contrôleur :
+
+Ne jamais inscrire de mot de passe, secret MFA, code de récupération ou lien d'activation.

@@ -116,3 +116,19 @@ Durées de conservation applicables, information des salariés et base légale, 
 - Les actions reconstruisent toujours le relevé côté serveur et passent par les services et policies des lots A/B/C. Les motifs obligatoires sont validés une première fois pour le confort de saisie, puis revalidés par `TimesheetReason` et par la policy. Un appel direct à une méthode Livewire reste soumis à ces contrôles.
 - Le journal global est réservé au Bureau/Direction, en lecture seule. Il ne projette que les événements de relevés autorisés et ne permet ni modification ni suppression. Un salarié ne voit que la chronologie de ses relevés ; un chef d'équipe uniquement celle de son périmètre.
 - Aucun nouveau système d'authentification, de permissions ou de workflow n'est introduit. Le panneau Filament conserve ses règles et sa 2FA ; les interfaces métier partagent le même garde `web` et la même matrice de permissions.
+
+
+## PC1-14 — Contrôle de la suppléance Bureau / Direction
+
+- Compte suppléant nominatif et distinct : `c.doizy@c2me.ovh` (Corentin Doizy, Gérant).
+- Rôle Bureau / Direction standard ; aucun privilège supplémentaire, rôle spécial ou mécanisme de contournement.
+- Identifiants et MFA propres ; partage de compte ou de session interdit.
+- Corentin Doizy peut déclencher la suppléance lorsqu'il constate l'indisponibilité du titulaire principal, sans accord préalable.
+- Les actions restent attribuées à l'identité du suppléant dans le journal d'audit.
+- La suppléance ne remplace pas les exceptions de permission temporaires et ne constitue pas un mécanisme break-glass.
+- `planning:emergency-lockdown` révoque globalement les sessions et n'accorde aucun droit.
+- La revue post-incident est réalisée par une personne physique habilitée ; `direction@c2me.ovh` est le compte de référence.
+- Contrôles trimestriels et après toute évolution importante de l'authentification, des rôles ou permissions.
+- Aucun mot de passe, secret MFA, code de récupération ou lien d'activation dans les documents de suivi.
+
+Voir `docs/PC1-14-PROCEDURE-URGENCE.md`.

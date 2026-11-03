@@ -311,3 +311,20 @@ Ne jamais exécuter `migrate:rollback` sur le batch de sécurité en production.
 Les ouvriers, chefs d'équipe et conducteurs de travaux utilisent `/login`, puis sont dirigés vers le planning mobile `/planning`. Le compte doit être actif et avoir terminé son activation. La connexion au panneau d'administration reste distincte sur `/admin/login` et demeure réservée aux rôles Administrateur et Bureau / Direction avec 2FA obligatoire.
 
 En cas d'échec de connexion, vérifier l'adresse e-mail, le mot de passe et l'état d'activation du compte dans `/admin/users`. Ne pas promouvoir un compte terrain en Bureau / Direction pour contourner le contrôle d'accès.
+
+
+## PC1-14 — Suppléance Bureau / Direction
+
+La procédure détaillée est décrite dans `docs/PC1-14-PROCEDURE-URGENCE.md`.
+
+- Suppléant : Corentin Doizy, Gérant, compte `c.doizy@c2me.ovh`.
+- Compte nominatif permanent, rôle Bureau / Direction standard, identifiants et MFA propres.
+- Corentin peut déclencher lui-même la suppléance lorsqu'il constate l'indisponibilité du titulaire principal ; aucun accord préalable n'est requis.
+- La prise de relais s'effectue avec le compte propre du suppléant. Le partage d'identifiants et l'utilisation de la session du titulaire principal sont interdits.
+- La suppléance n'est ni une élévation de privilèges ni un mécanisme break-glass.
+- `planning:emergency-lockdown` reste une révocation globale des sessions, sans octroi de droits.
+- Après chaque prise de relais exceptionnelle liée à un incident, une personne physique habilitée réalise une revue ; `direction@c2me.ovh` est le compte de référence.
+- Contrôle trimestriel et après toute évolution importante de l'authentification, des rôles ou permissions, sous la responsabilité du titulaire habilité de `direction@c2me.ovh`, avec participation de Corentin.
+- Aucun secret d'authentification ne doit figurer dans les preuves.
+
+La validation formelle et les preuves de contrôle restent à enregistrer avant clôture du ticket.
