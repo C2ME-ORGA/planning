@@ -23,6 +23,8 @@ use RuntimeException;
  */
 class AccountProvisioner
 {
+    private const BOOTSTRAP_LOCK = 'bootstrap.bureau_direction';
+
     public function __construct(
         private readonly AuditLogger $audit,
         private readonly AccountActivationService $activations,
@@ -69,23 +71,44 @@ class AccountProvisioner
     /**
      * Point d'entrée réservé au bootstrap contrôlé du premier compte
      * Bureau / Direction. Il refuse toute promotion d'un compte existant.
+     *
+     * La garantie contre deux bootstraps concurrents repose sur la clé
+     * primaire de `system_locks` : la première transaction insère le verrou
+     * et le conserve jusqu'au commit. Une seconde transaction concurrente
+     * attend puis échoue sur la contrainte unique si la première a réussi.
+     * Si la première échoue, son rollback libère l'insertion et la seconde
+     * peut poursuivre. Le verrou reste ensuite comme marqueur durable :
+     * le bootstrap est définitivement clos après une réussite.
      */
     public function bootstrapBureauDirection(string $name, string $email): User
     {
-        if (User::query()->bureauDirection()->exists()) {
-            throw new RuntimeException('Un compte Bureau / Direction existe déjà : le bootstrap est clos.');
-        }
+        return DB::transaction(function () use ($name, $email): User {
+            $locked = DB::table('system_locks')->insertOrIgnore([
+                'name' => self::BOOTSTRAP_LOCK,
+                'created_at' => now(),
+            ]);
 
-        $user = $this->create($name, $email, Role::BureauDirection);
+            if ($locked === 0) {
+                throw new RuntimeException('Un compte Bureau / Direction existe déjà : le bootstrap est clos.');
+            }
 
-        $this->audit->record(
-            AuditAction::BootstrapBureauCreated,
-            $user,
-            ['role' => Role::BureauDirection->value],
-            'Initialisation contrôlée du premier compte Bureau / Direction.',
-        );
+            // Contrôle après acquisition du verrou : une transaction
+            // concurrente a pu créer le compte pendant l'attente.
+            if (User::query()->bureauDirection()->exists()) {
+                throw new RuntimeException('Un compte Bureau / Direction existe déjà : le bootstrap est clos.');
+            }
 
-        return $user;
+            $user = $this->create($name, $email, Role::BureauDirection);
+
+            $this->audit->record(
+                AuditAction::BootstrapBureauCreated,
+                $user,
+                ['role' => Role::BureauDirection->value],
+                'Initialisation contrôlée du premier compte Bureau / Direction.',
+            );
+
+            return $user;
+        });
     }
 
     public function activate(AccountActivation $activation, string $password): User
