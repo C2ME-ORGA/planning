@@ -130,14 +130,12 @@ it('requires explicit confirmation for an additional Bureau account', function (
 it('rejects actor option in first-account bootstrap mode', function () {
     Notification::fake();
 
-    $actor = User::factory()->bureauDirection()->create();
-
     $this->artisan('planning:bootstrap-bureau', [
-        'email' => 'autre@example.test',
-        '--name' => 'Autre compte',
-        '--actor' => $actor->email,
+        'email' => 'direction@example.test',
+        '--name' => 'Compte initial',
+        '--actor' => 'acteur@example.test',
         '--confirm' => true,
     ])->assertExitCode(1);
 
-    $this->assertDatabaseMissing('users', ['email' => 'autre@example.test']);
+    $this->assertDatabaseMissing('users', ['email' => 'direction@example.test']);
 });
