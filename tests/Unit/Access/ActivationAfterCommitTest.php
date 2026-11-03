@@ -1,12 +1,12 @@
 <?php
 
-use Illuminate\Foundation\Testing\DatabaseMigrations;
-use Tests\TestCase;
 use App\Enums\AuditAction;
 use App\Models\User;
 use App\Notifications\AccountActivationNotification;
 use App\Services\Accounts\AccountActivationService;
 use Illuminate\Contracts\Notifications\Dispatcher;
+use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Tests\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
