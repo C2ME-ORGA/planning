@@ -2,9 +2,6 @@
 
 use Illuminate\Foundation\Testing\DatabaseMigrations;
 use Tests\TestCase;
-
-uses(TestCase::class, DatabaseMigrations::class);
-
 use App\Enums\AuditAction;
 use App\Models\User;
 use App\Notifications\AccountActivationNotification;
@@ -13,6 +10,8 @@ use Illuminate\Contracts\Notifications\Dispatcher;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
+
+uses(TestCase::class, DatabaseMigrations::class);
 
 it('dispatches the activation notification only after the outer transaction commits', function () {
     Notification::fake();
