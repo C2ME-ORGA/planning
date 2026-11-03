@@ -5,13 +5,21 @@ use App\Models\User;
 use App\Notifications\AccountActivationNotification;
 use App\Services\Accounts\AccountActivationService;
 use Illuminate\Contracts\Notifications\Dispatcher;
-use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use Tests\TestCase;
 
-uses(TestCase::class, DatabaseMigrations::class);
+uses(TestCase::class);
+
+// This test must commit a real root transaction to exercise afterCommit().
+// DatabaseMigrations rolls back the schema during teardown, which is forbidden
+// by the irreversible PC1-12 migration. Rebuild the dedicated PHPUnit database
+// before each test instead; migrate:fresh drops tables without calling down().
+beforeEach(function () {
+    Artisan::call('migrate:fresh', ['--force' => true]);
+});
 
 it('dispatches the activation notification only after the outer transaction commits', function () {
     Notification::fake();
