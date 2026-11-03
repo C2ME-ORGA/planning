@@ -4,7 +4,6 @@ use App\Enums\AuditAction;
 use App\Models\User;
 use App\Notifications\AccountActivationNotification;
 use App\Services\Accounts\AccountActivationService;
-use App\Services\Audit\AuditLogger;
 use Illuminate\Contracts\Notifications\Dispatcher;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -82,8 +81,8 @@ it('keeps activation persisted and logs safely when mail transport fails after c
 
     Log::shouldHaveReceived('error')->once()->withArgs(
         function ($message, $context = []) use ($token): bool {
-            return ! str_contains((string) $message, $token)
-                && ! str_contains((string) json_encode($context), $token);
+            return !str_contains((string) $message, $token)
+                && !str_contains((string) json_encode($context), $token);
         },
     );
 });
