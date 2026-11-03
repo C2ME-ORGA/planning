@@ -121,6 +121,8 @@ it('adds, modifies and deletes a segment while signalling overlaps without block
         ->and($first->end_at?->utc()->format('Y-m-d H:i'))->toBe('2026-11-02 11:00');
 
     $component
+        ->set('startDate', '2026-11-02')
+        ->set('endDate', '2026-11-02')
         ->set('startTime', '11:00')
         ->set('endTime', '13:00')
         ->call('saveSegment')
