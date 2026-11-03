@@ -6,10 +6,10 @@ use App\Notifications\AccountActivationNotification;
 use App\Services\Accounts\AccountActivationService;
 use Illuminate\Contracts\Notifications\Dispatcher;
 use Illuminate\Foundation\Testing\DatabaseMigrations;
-use Tests\TestCase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
+use Tests\TestCase;
 
 uses(TestCase::class, DatabaseMigrations::class);
 
@@ -85,7 +85,7 @@ it('keeps activation persisted and logs safely when mail transport fails after c
 
     Log::shouldHaveReceived('error')->once()->withArgs(
         function ($message, $context = []) use ($token): bool {
-            return !str_contains((string) $message, $token)
+            return ! str_contains((string) $message, $token)
                 && !str_contains((string) json_encode($context), $token);
         },
     );
