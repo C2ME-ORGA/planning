@@ -49,6 +49,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Calculs horaires
+    |--------------------------------------------------------------------------
+    |
+    | Référence mensuelle par défaut du compteur de travail effectif : 169 h,
+    | soit 10 140 minutes. Une référence individuelle peut remplacer cette
+    | valeur pour un salarié ; la résolution par date d'effet est portée par
+    | les services de calcul.
+    |
+    */
+
+    'hours' => [
+        'monthly_reference_minutes' => (int) env('PLANNING_MONTHLY_REFERENCE_MINUTES', 10140),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Intégrité du journal d'audit
     |--------------------------------------------------------------------------
     |

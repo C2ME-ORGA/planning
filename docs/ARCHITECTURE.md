@@ -612,6 +612,25 @@ effectives doivent être verrouillées dans `composer.lock` et
 documentées. La CI utilise PHP 8.4, Node 22.18.0 et MySQL 8.4 ; la base
 locale de développement peut utiliser une version MySQL 8.x compatible.
 
+### 3.8 Calculs horaires et agrégats mensuels (PC1-34)
+
+Les calculs officiels sont portés par `App\Services\Hours`, séparés du
+workflow des relevés et de l'affichage :
+
+- `ValidatedTimesheetSelector` filtre en SQL les seuls relevés validés ;
+- `CategoryIntervals` fusionne les intervalles d'une catégorie et réutilise
+  `WorkedTimeCalculator` pour les durées et la ventilation civile ;
+- `WeeklyHoursCalculator` applique le seuil de 39 h sans report de déficit ;
+- `EmploymentPresence`, `MonthlyReferenceResolver` et `ProratedReference`
+  résolvent la référence mensuelle et sa proratisation ;
+- `MonthlyHoursAggregator` produit les agrégats par mois civil et par catégorie ;
+- `OfficialHoursCalculator` compose ces services sans règle propre.
+
+Ces services sont en lecture seule : ils ne créent ni segment, ni audit, ni
+mouvement de compteur. Les références individuelles historisées et les
+mouvements persistants restent hors de PC1-34 et nécessitent un schéma validé.
+Le détail des règles est consigné dans `docs/PC1-34-DECISIONS.md`.
+
 ## 3. Architecture applicative proposée
 
 Pour le MVP, privilégier un monolithe modulaire plutôt que des

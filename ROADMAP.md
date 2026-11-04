@@ -67,8 +67,8 @@ Présents : modèles et gestion clients/chantiers, statuts et archivage, plannin
 Les motifs de journée attendue sans heure sont différés au Lot 7 conformément à l'arbitrage enregistré. Les notifications et le mode hors ligne restent hors périmètre du Lot 5.
 
 ### Lot 6 — Calculs et compteur
-**État : à faire.**
-Développer les calculs hebdomadaires au-delà de 39 h de travail effectif, agrégats mensuels, référence de 169 h configurable, compteur, journal des mouvements, paiements/ajustements et clôture trimestrielle. Conserver l'indépendance entre heures supplémentaires et compteur. Aucun calcul de majoration de paie ni retenue automatique. Jira : PC1-10, PC1-34 à PC1-36.
+**État : en cours (PC1-34 livré localement, à valider).**
+Les services de calcul PC1-34 sont présents : sélection des relevés validés, fusion des chevauchements, calcul hebdomadaire au-delà de 39 h, agrégats mensuels, référence de 169 h configurable et proratisation selon les jours de présence. Le stockage historique des références individuelles, les mouvements persistants du compteur, les ajustements, paiements et clôtures restent à réaliser dans PC1-35/PC1-36. Conserver l'indépendance entre heures supplémentaires et compteur. Aucun calcul de majoration de paie ni retenue automatique. Jira : PC1-10, PC1-34 à PC1-36.
 
 ### Lot 7 — Absences, indemnités et avances
 **État : à faire.**
