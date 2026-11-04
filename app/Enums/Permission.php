@@ -50,6 +50,10 @@ enum Permission: string
     case AbsenceOwnView = 'absence.own-view';
     case AbsenceManage = 'absence.manage';
 
+    // Compteur d'heures (lot 6).
+    case CounterView = 'counter.view';
+    case CounterManage = 'counter.manage';
+
     public function label(): string
     {
         return match ($this) {

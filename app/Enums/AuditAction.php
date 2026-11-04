@@ -76,6 +76,11 @@ enum AuditAction: string
     case EmergencyLockdownRequested = 'system.emergency_lockdown_requested';
     case EmergencyLockdown = 'system.emergency_lockdown';
 
+    case CounterCredit = 'counter.credit';
+    case CounterUsage = 'counter.usage';
+    case CounterPayment = 'counter.payment';
+    case CounterAdjustment = 'counter.adjustment';
+
     public function label(): string
     {
         return match ($this) {
