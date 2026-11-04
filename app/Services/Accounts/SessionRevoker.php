@@ -2,200 +2,163 @@
 
 namespace App\Services\Accounts;
 
-use App\Exceptions\PartialSessionRevocationException;
 use App\Models\User;
-use Illuminate\Database\Connection;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
 
 /**
- * Révocation immédiate des sessions et jetons persistants d'un compte.
+ * Révocation immédiate des sessions et jetons persistants.
  *
- * Cette implémentation ne prend en charge que le pilote SQL `database`.
- * Tout autre pilote (`redis`, `file`, etc.) est refusé explicitement avant
- * toute suppression ou modification de remember token.
+ * Ordre volontaire pour chaque portée :
+ * 1. invalidation logique (version utilisateur ou génération globale) ;
+ * 2. rotation des identifiants persistants ;
+ * 3. nettoyage physique des sessions si le stockage le permet.
+ *
+ * Une panne du nettoyage physique ne peut donc pas rendre une ancienne
+ * session valide. Une panne de l'invalidation logique est propagée : aucun
+ * audit de réussite ne doit être écrit dans ce cas.
  */
 class SessionRevoker
 {
-    public function revoke(User $user): int
+    public function __construct(
+        private readonly AuthenticationGeneration $generation,
+    ) {}
+
+    public function revoke(User $user): SessionRevocationResult
     {
-        $this->assertSupportedDriver();
-        $connection = $this->sessionConnection();
-        $this->assertSupportedSessionStore($connection);
-
-        $table = (string) config('session.table', 'sessions');
-
-        $deleteSessions = fn (): int => $connection->table($table)
-            ->where('user_id', $user->getKey())
-            ->delete();
-
-        if ($this->usesDefaultConnection($connection)) {
-            return $connection->transaction(function () use ($deleteSessions, $user): int {
-                $deleted = $deleteSessions();
-                $this->rotateRememberToken($user);
-
-                return $deleted;
-            });
-        }
-
-        // Connexions distinctes : une transaction SQL unique ne peut pas couvrir
-        // deux connexions. La suppression des sessions est transactionnelle sur
-        // sa connexion et précède le renouvellement du jeton sur la connexion
-        // par défaut.
-        $deleted = $connection->transaction($deleteSessions);
-        DB::transaction(fn () => $this->rotateRememberToken($user));
-
-        return $deleted;
-    }
-
-    public function revokeAll(): int
-    {
-        $this->assertSupportedDriver();
-        $connection = $this->sessionConnection();
-        $this->assertSupportedSessionStore($connection);
-
-        $table = (string) config('session.table', 'sessions');
-        $deleteSessions = fn (): int => $connection->table($table)->delete();
-
-        if ($this->usesDefaultConnection($connection)) {
-            return $connection->transaction(function () use ($deleteSessions): int {
-                $deleted = $deleteSessions();
-                $this->rotateAllRememberTokens();
-
-                return $deleted;
-            });
-        }
-
-        // Même limite que revoke() : deux connexions ne partagent pas une
-        // transaction SQL. Les sessions sont supprimées d'abord.
-        $deleted = $connection->transaction($deleteSessions);
-
         try {
-            DB::transaction(fn () => $this->rotateAllRememberTokens());
+            // L'UPDATE et la relecture forment une seule unité logique : si la
+            // lecture échoue après l'UPDATE, la transaction annule les deux.
+            // Depuis une transaction métier existante, Laravel utilise un
+            // savepoint et l'appelant conserve la maîtrise du rollback global.
+            $version = DB::transaction(function () use ($user): int {
+                $updated = User::query()
+                    ->whereKey($user->getKey())
+                    ->update([
+                        'remember_token' => Str::random(60),
+                        'session_version' => DB::raw('session_version + 1'),
+                    ]);
+
+                if ($updated !== 1) {
+                    throw new RuntimeException('Le compte à révoquer est introuvable.');
+                }
+
+                $version = User::query()->whereKey($user->getKey())->value('session_version');
+
+                if ($version === null) {
+                    throw new RuntimeException('La version de session du compte est introuvable.');
+                }
+
+                return (int) $version;
+            });
         } catch (Throwable $exception) {
-            throw new PartialSessionRevocationException(
-                deletedSessions: $deleted,
-                rememberTokensRotated: false,
-                auditRecorded: false,
-                previous: $exception,
-            );
+            throw new SessionRevocationException('user', 'logical', $exception);
         }
 
-        return $deleted;
+        return $this->buildResult('user', $version, $this->purgeSessions($user->getKey()));
     }
 
-    /**
-     * Indique si les sessions utilisent une connexion distincte de la
-     * connexion par défaut.
-     */
-    public function usesDistinctConnection(): bool
+    public function revokeAll(): SessionRevocationResult
     {
-        $configured = config('session.connection');
-
-        if (! is_string($configured) || trim($configured) === '') {
-            return false;
-        }
-
-        return trim($configured) !== DB::getDefaultConnection();
-    }
-
-    /**
-     * Résout la connexion réellement utilisée par le stockage des sessions.
-     *
-     * @throws RuntimeException
-     */
-    private function sessionConnection(): Connection
-    {
-        $configured = config('session.connection');
-        $name = is_string($configured) && trim($configured) !== '' ? trim($configured) : null;
-
         try {
-            return DB::connection($name);
+            // Étape critique : génération globale et invalidation de tous les
+            // cookies remember-me dans une seule transaction. Une interruption
+            // après le commit laisse déjà toutes les anciennes authentifications
+            // inutilisables.
+            $generation = $this->generation->revokeAll();
         } catch (Throwable $exception) {
-            $label = $name ?? 'par défaut';
-
-            throw new RuntimeException(
-                "La connexion de sessions « {$label} » est indisponible ou inconnue.",
-                0,
-                $exception,
-            );
+            throw new SessionRevocationException('global', 'logical', $exception);
         }
+
+        return $this->buildResult('global', $generation, $this->purgeSessions(null));
     }
 
     /**
-     * Refuse tout pilote non SQL avant toute connexion ou écriture.
+     * Nettoie les sessions physiques uniquement pour le pilote SQL.
      *
-     * @throws RuntimeException
+     * Les pilotes `redis`, `file`, `cookie`, `array`, etc. ne partagent pas la
+     * table `sessions` : interroger cette table produirait une fausse erreur
+     * (ou supprimerait des lignes sans rapport). Le nettoyage est alors
+     * explicitement non applicable, sans jamais remettre en cause la
+     * révocation logique déjà acquise.
+     *
+     * @return array{deleted: int, driver: string, required: bool, error: ?string}
      */
-    private function assertSupportedDriver(): void
+    private function purgeSessions(?int $userId): array
     {
         $driver = (string) config('session.driver');
 
         if ($driver !== 'database') {
-            throw new RuntimeException(
-                "La révocation SQL des sessions exige SESSION_DRIVER=database ; pilote configuré : {$driver}."
-            );
+            return [
+                'deleted' => 0,
+                'driver' => $driver,
+                'required' => false,
+                'error' => null,
+            ];
         }
-    }
-
-    /**
-     * Vérifie la table et ses colonnes sur la connexion effective.
-     *
-     * @throws RuntimeException
-     */
-    private function assertSupportedSessionStore(Connection $connection): void
-    {
-        $table = (string) config('session.table', 'sessions');
-        $connectionName = $connection->getName() ?? 'par défaut';
 
         try {
-            $schema = $connection->getSchemaBuilder();
-            $valid = $schema->hasTable($table)
-                && $schema->hasColumns($table, ['id', 'user_id']);
+            $query = $this->sessionTable();
+
+            if ($userId !== null) {
+                $query->where('user_id', $userId);
+            }
+
+            return [
+                'deleted' => $query->delete(),
+                'driver' => $driver,
+                'required' => true,
+                'error' => null,
+            ];
         } catch (Throwable $exception) {
-            // Erreur réelle de connexion ou d'inspection du schéma : elle
-            // survient souvent au premier accès PDO, pas dans DB::connection().
-            throw new RuntimeException(
-                "Impossible de vérifier la table de sessions « {$table} » sur la connexion « {$connectionName} ».",
-                0,
-                $exception,
-            );
+            report($exception);
+
+            Log::warning('Nettoyage physique des sessions échoué.', [
+                'driver' => $driver,
+                'scope' => $userId === null ? 'global' : 'user',
+                'user_id' => $userId,
+                'error_class' => $exception::class,
+            ]);
+
+            return [
+                'deleted' => 0,
+                'driver' => $driver,
+                'required' => true,
+                'error' => $exception::class,
+            ];
         }
-
-        if (! $valid) {
-            throw new RuntimeException(
-                "La table de sessions « {$table} » est absente ou incomplète sur la connexion « {$connectionName} » (colonnes id, user_id requises)."
-            );
-        }
-    }
-
-    private function usesDefaultConnection(Connection $connection): bool
-    {
-        return $connection->getName() === DB::getDefaultConnection();
-    }
-
-    private function rotateRememberToken(User $user): void
-    {
-        $user->forceFill(['remember_token' => Str::random(60)])->saveQuietly();
     }
 
     /**
-     * Parcours borné : les utilisateurs sont traités par lots de 500.
+     * @param  array{deleted: int, driver: string, required: bool, error: ?string}  $physical
      */
-    private function rotateAllRememberTokens(): void
+    private function buildResult(string $scope, int $generation, array $physical): SessionRevocationResult
     {
-        DB::table('users')
-            ->select('id')
-            ->orderBy('id')
-            ->chunkById(500, static function ($users): void {
-                foreach ($users as $user) {
-                    DB::table('users')->where('id', $user->id)->update([
-                        'remember_token' => Str::random(60),
-                        'updated_at' => now(),
-                    ]);
-                }
-            });
+        return new SessionRevocationResult(
+            scope: $scope,
+            generation: $generation,
+            deletedSessions: $physical['deleted'],
+            sessionDriver: $physical['driver'],
+            physicalCleanupRequired: $physical['required'],
+            physicalError: $physical['error'],
+        );
+    }
+
+    /**
+     * Cible la connexion réellement utilisée pour les sessions.
+     *
+     * `DB::connection(null)` retourne la connexion par défaut : c'est le
+     * comportement attendu lorsque `session.connection` n'est pas renseignée.
+     */
+    private function sessionTable(): Builder
+    {
+        $connection = config('session.connection');
+        $table = (string) config('session.table', 'sessions');
+
+        return DB::connection($connection)->table($table);
     }
 }

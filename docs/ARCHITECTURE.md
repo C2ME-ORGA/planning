@@ -48,6 +48,36 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     (`AccountActivation`, contrôleur dédié),
     désactivation avec révocation des sessions (`SessionRevoker`), réinitialisation
     de la 2FA en CLI. Aucune suppression physique.
+-   **Révocation individuelle** : `SessionRevoker` incrémente
+    `users.session_version` et renouvelle `remember_token` dans un même UPDATE,
+    avec relecture de contrôle dans la même transaction, avant de tenter le
+    nettoyage physique. Une panne de relecture annule l’UPDATE. Une panne de
+    nettoyage ne remet pas en cause l'invalidation logique ; elle est reportée
+    dans l'audit avec l'état `completed`, `failed` ou `not_applicable`.
+-   **Révocation globale** : `authentication_state.global_generation` est
+    incrémentée et tous les `remember_token` sont mis à `NULL` dans une même
+    transaction, sans charger les comptes en mémoire. Le nettoyage SQL des
+    sessions intervient ensuite et reste secondaire. La génération est lue sur
+    la connexion d'écriture.
+-   **Contrôle des sessions** : `EnsureAccountIsActive` exige les marqueurs
+    `auth.session_version` et `auth.global_generation`. Il capture la génération
+    avant la résolution de l'utilisateur afin de détecter une révocation
+    concurrente, y compris pendant une authentification remember-me. Une
+    session sans marqueur est refusée. Une session obsolète d'un compte actif
+    est déconnectée de l'appareil courant sans renouveler le jeton des autres
+    appareils ; un compte désactivé subit la rotation défensive complète.
+-   **Pilotes** : la suppression SQL cible `session.connection` /
+    `session.table` et n'est requise que pour le pilote `database`. Avec
+    `file`, `redis` ou un autre pilote, l'invalidation logique est la garantie ;
+    l'absence de table SQL n'empêche jamais la révocation.
+-   **Audit des échecs** : une invalidation logique échouée produit
+    `account.session_revocation_failed` avec acteur, motif, périmètre et étape.
+    Le changement de rôle journalise séparément la révocation des sessions et
+    son état de nettoyage. Le verrouillage global écrit un événement
+    d'intention avant l'action, puis un événement final avec la génération.
+-   **Migrations** : `authentication_state` refuse son rollback destructif. Le
+    préflight `planning:security:install` applique ou vérifie les deux
+    migrations de sécurité indépendamment des migrations métier.
 -   **Amorçage** : `planning:bootstrap-bureau` crée le premier Bureau/Direction,
     refuse si un tel compte existe déjà, puis se ferme. Aucune élévation de
     privilège par la CLI : chaque commande sensible exige `--actor` avec la
@@ -72,10 +102,509 @@ gates et le journal d'audit chaîné sont décrits à la section 3.1.
     événements historiques qui en dépendent.
 -   **Auto-validation** : `ApprovalRules` interdit à un conducteur/chef
     d'approuver sa propre proposition ; l'auto-validation Bureau/Direction
-    exige un motif et produit un événement d'audit dédié.
+    exige un motif d'au moins 10 caractères et produit un événement d'audit
+    dédié. La policy vérifie explicitement le rôle Bureau/Direction, et un
+    compte inactif est refusé même en appel direct du service.
 -   **Configuration** : `config/planning.php` (durée d'activation, durée max
-    des exceptions, clé et identifiant d'audit), `config/session.php`
-    (15 minutes).
+    des exceptions, clé et identifiant d'audit, délai du verrou salarié),
+    `config/session.php` (15 minutes).
+
+### 3.2 Salariés, emploi et équipes (lot 3)
+
+-   **Séparation compte / salarié** : `employees` est indépendant de `users`.
+    `employees.user_id` est nullable, unique et `nullOnDelete` ; une fiche peut
+    exister sans compte et la désactivation ou la suppression technique du
+    compte ne supprime ni la fiche ni son historique.
+-   **Identité minimale** : `first_name`, `last_name`. Les champs non validés
+    (matricule, coordonnées, date de naissance, contrat, poste) ne sont pas
+    inventés dans ce lot.
+-   **Périodes d'emploi** : `employment_periods` (`employee_id`, `start_date`,
+    `end_date` nullable), dates inclusives, contrainte SQL de cohérence et
+    index. Les périodes sont strictement append-only ; une réembauche crée une
+    nouvelle période. Le modèle `EmploymentPeriod` refuse toute mise à jour
+    Eloquent directe et toute suppression, sans API d'autorisation temporaire.
+    La clôture légitime est écrite uniquement dans
+    `EmployeeLifecycleService::exit()`, par une écriture Query Builder ciblée
+    (`whereNull('end_date')`) après permission, verrou salarié, relecture et
+    contrôle des affectations/responsabilités, sous transaction ; le résultat
+    `$affected !== 1` provoque une exception et le rollback complet (écriture
+    SQL directe hors application possible, non couverte par les modèles).
+    L'absence de chevauchement est vérifiée par `EmploymentPeriodService` dans
+    une transaction protégée par un verrou MySQL nommé (`EmployeeMutationLock`).
+    MySQL ne fournit pas d'exclusion de plages : la contrainte SQL seule ne
+    suffit pas. Aucune procédure de correction rétroactive n'est implémentée
+    faute de règles métier ; voir `docs/OPERATIONS.md`.
+-   **Équipes** : `teams` ne porte pas de `leader_id` écrasable. Les
+    affectations sont dans `team_assignments` (`kind` = `primary` ou
+    `temporary`) et les responsabilités dans `team_leaderships`. Ces tables
+    sont historisées, sans suppression en cascade ; une affectation future peut
+    être annulée avec motif (`cancelled_at`, `cancellation_reason`), une
+    affectation commencée se clôt par une date de fin.
+-   **Cohérence** : une affectation ou une responsabilité doit être entièrement
+    couverte par une période d'emploi. Une affectation temporaire est un
+    enregistrement distinct et ne modifie jamais l'équipe principale. Une
+    équipe ne peut avoir qu'une responsabilité principale à la fois, et un
+    salarié ne peut être responsable principal que d'une seule équipe à la fois,
+    toutes équipes confondues.
+-   **Responsable principal** : salarié couvert par une période d'emploi,
+    compte actif lié, rôle `chef_equipe` ou `conducteur_travaux`. La
+    réaffectation est explicite : l'ancienne responsabilité ouverte est
+    clôturée la veille de la date d'effet et l'historique est conservé. Le
+    retrait du rôle, la désactivation du compte et la déliaison du compte sont
+    refusés tant qu'une responsabilité non terminée subsiste.
+-   **Concurrence** : les opérations de responsabilité prennent d'abord un
+    verrou nommé sur l'équipe (`TeamMutationLock`), puis les verrous salariés
+    (`EmployeeMutationLock::runMany`) triés par identifiant. L'administration
+    des comptes prend le verrou salarié avant de verrouiller la ligne `users`.
+    Les règles sont revalidées après acquisition des verrous ; une attente
+    dépassée refuse l'écriture.
+-   **Sortie** : `EmployeeLifecycleService` clôt la période d'emploi ouverte.
+    Avant écriture, il liste les affectations et responsabilités qui
+    resteraient actives après la date de sortie et refuse l'opération avec
+    `EmployeeExitBlockedException`. Aucune affectation n'est tronquée
+    automatiquement. Le même service peut, sur demande explicite, désactiver le
+    compte applicatif lié dans la même transaction : la sortie, la révocation
+    des sessions, la désactivation et leurs audits sont alors atomiques. Sans
+    demande explicite, le compte reste inchangé. Une désactivation immédiate
+    n'est acceptée que pour une sortie effective aujourd'hui ou dans le passé.
+    Elle est refusée si une responsabilité d'équipe couvre encore la date
+    effective de désactivation (dates inclusives : end_date nulle ou >=
+    aujourd'hui, y compris une responsabilité se terminant à la date de
+    sortie) ; la sortie reste alors possible sans désactivation, la
+    responsabilité étant compatible avec la clôture de la période.
+-   **Permissions** : `employees.view`, `employees.manage`, `teams.view`,
+    `teams.manage`, accordées uniquement au Bureau/Direction. L'Administrateur
+    technique conserve uniquement `audit.view` ; les autres rôles n'ont pas
+    accès au panneau. Les services revérifient la permission de l'acteur.
+-   **Audit** : actions `employee.*`, `employment_period.*`,
+    `team.*`, `team_assignment.*`, `team_leader.*` dans le journal existant.
+    Les noms de salariés ne sont pas recopiés dans les modifications d'audit ;
+    les identifiants, dates, équipes et natures suffisent.
+-   **Planning chantier (PC1-29)** : `planning_assignments` référence un
+    chantier, une équipe, une date civile et une demi-journée
+    (`App\Enums\PlanningHalfDay`). Les membres de l'équipe ne sont pas
+    recopiés : `PlanningRoster` les déduit des `team_assignments` actives à la
+    date, principales ou temporaires. Les exclusions individuelles sont dans
+    `planning_assignment_exclusions` et ne créent ni absence ni temps réel.
+    `PlanningAssignmentService` centralise la validation, les exclusions, les
+    chevauchements d'équipe ou de salarié et l'audit transactionnel. Les
+    chevauchements sont des avertissements non bloquants conservés dans le
+    contexte d'audit ; aucune affectation existante n'est déplacée. La
+    suppression physique est refusée ; l'historique complet reste à définir
+    dans PC1-30.
+
+### 3.3 Relevés d'heures — socle technique (Lot 5, incrément 1)
+
+- **Période** : un relevé (`timesheets`) couvre une semaine civile complète, du
+  lundi au dimanche. La contrainte SQL vérifie le jour de début et la longueur ;
+  le modèle refuse une période non conforme et `Timesheet::weekFor()` ramène
+  toute date au fuseau métier avant de calculer la semaine. Le relevé ne
+  contient ni horaire attendu ni donnée de planning.
+- **Segments** : `timesheet_segments` porte une catégorie
+  (`App\Enums\TimeCategory` : travail effectif, trajet, pause, formation,
+  autre), un début et une fin. Les instants sont stockés en UTC ; les offsets
+  locaux français sont **dérivés de l'instant** à l'écriture par
+  `App\Support\BusinessTime`, jamais fournis séparément. Les catégories et
+  l'ordre strictement croissant des instants sont contrôlés par `CHECK`.
+  `App\Casts\UtcDateTime` refuse toute chaîne de date-heure, y compris avec un
+  offset explicite : un instant doit être fourni comme objet temporel explicite.
+  **Limite :** la dérivation des offsets a lieu dans `TimesheetSegment::saving`
+  lors des sauvegardes Eloquent. Une écriture directe via Query Builder ou SQL
+  contourne ce contrôle et peut stocker un offset incohérent ; aucune contrainte
+  SQL ne l'en empêche aujourd'hui. Les futurs services métier devront privilégier
+  les modèles Eloquent ou appliquer explicitement la même dérivation.
+- **Fuseau** : `App\Services\Timesheets\LocalDateTimeResolver` résout une heure
+  locale `Europe/Paris` en instant non ambigu. Une heure inexistante lors du
+  passage à l'heure d'été est refusée ; une heure ambiguë lors du passage à
+  l'heure d'hiver exige un offset explicite. Aucun arrondi n'est accepté.
+- **Calculs** : `App\Services\Timesheets\WorkedTimeCalculator` calcule des
+  minutes entières, répartit un segment par date civile locale (y compris les
+  jours de 23 ou 25 heures) et garantit que la somme journalière égale la durée
+  totale. Un segment strictement supérieur à 720 minutes produit un
+  avertissement non bloquant ; 720 minutes exactement n'en produit pas.
+- **Chevauchements** : `App\Services\Timesheets\TimesheetOverlapDetector`
+  détecte, pour un même salarié, les segments qui se chevauchent, toutes
+  catégories et tous relevés confondus. `overlapsForSegment()` et
+  `warningsForSegment()` sont réservées aux segments déjà persistés : l'exclusion
+  du segment courant s'appuie sur son identifiant en base.
+  `overlapsForCandidate()` et `warningsForCandidate()` vérifient une plage qui
+  n'existe pas encore. Le résultat est un avertissement non bloquant ; il ne
+  modifie ni ne supprime aucune donnée.
+- **Hors périmètre de cet incrément** : workflow, transmissions, idempotence,
+  policy, interface, validation finale et audit métier. Aucun préremplissage
+  depuis `planning_assignments` n'est introduit.
+
+### 3.4 Autorisations et transitions des relevés (Lot 5, incrément 2A)
+
+- **Transitions** : la matrice est centralisée dans `App\Enums\TimesheetStatus`
+  (`allowedTransitions()`, `canTransitionTo()`, `requiresReasonTo()`). Seul
+  `Brouillon` est éditable ; les autres états sont verrouillés pour l'édition
+  des segments. Aucune transition n'est exécutée par l'enum.
+- **Policy** : `App\Policies\TimesheetPolicy` est enregistrée dans
+  `AccessServiceProvider`. Elle distingue le propriétaire, le contrôleur de
+  périmètre, le Bureau/Direction et l'Administrateur technique. `TimesheetValidate`
+  sert de droit global Bureau pour la gestion, sans conférer la transmission
+  (réservée au salarié propriétaire, via `TimesheetOwn` ; le Bureau/Direction
+  possède aussi cette permission pour son propre relevé), la réouverture
+  (`WorkflowReopen`) ni l'audit (`AuditView`). Un compte inactif est refusé
+  côté serveur par les services et les policies, même s'il conserve ses
+  permissions.
+- **Contrat Gate de création** : `create(User $actor): bool` est la capacité
+  globale, appelable telle quelle (`Gate::allows('create', Timesheet::class)`).
+  Elle n'exprime que le droit général de créer un relevé (Bureau/Direction) et
+  ne porte aucune cible, donc elle n'autorise jamais à choisir le salarié.
+  Toute création réelle passe par `createFor(User $actor, Timesheet
+  $timesheet): bool`, appelée avec un brouillon non enregistré portant
+  `employee_id` : `Gate::authorize('createFor', $draft)`. Le propriétaire est
+  autorisé par `TimesheetOwn`, le Bureau/Direction par `TimesheetValidate`.
+  Ne jamais invoquer `create` avec un `Employee` : Gate résoudrait alors
+  `EmployeePolicy` et contournerait la policy du relevé.
+- **Contrat Gate des motifs** : `requestCorrection()` (retour pour correction),
+  `markReadyForValidation()` et `reopen()` exigent un motif et le reçoivent via
+  la liste d'arguments de Gate :
+  `Gate::authorize('requestCorrection', [$timesheet, $reason])`,
+  `Gate::authorize('markReadyForValidation', [$timesheet, $reason])`,
+  `Gate::authorize('reopen', [$timesheet, $reason])`. Appeler la capacité avec
+  le seul `$timesheet` passe `$reason = null` et doit être refusé : c'est le
+  comportement attendu, pas un défaut à contourner. La vérification du motif
+  (entre 10 et 500 caractères après `trim()`) reste obligatoire côté serveur.
+- **Périmètre** : `App\Services\Timesheets\TimesheetPerimeter` calcule les
+  responsables admissibles à partir des `team_assignments` et
+  `team_leaderships` historisés. Les affectations principales et temporaires
+  sont prises en compte ; l'affectation et la responsabilité doivent se
+  chevaucher pendant la semaine. Les annulations sont exclues, les
+  responsabilités terminées normalement restent pertinentes pour la période
+  couverte. Tous les responsables admissibles le sont sans priorité.
+- **Séparation des tâches** : `App\Services\Timesheets\TimesheetActorHistory`
+  lit les événements `timesheet.created`, `timesheet.updated`,
+  `timesheet.submitted`, `timesheet.sent_to_validation`,
+  `timesheet.returned_for_correction` et
+  `timesheet.ready_for_validation`.
+  `TimesheetPolicy::validate()` refuse un préparateur et un contrôleur, et exige
+  une piste d'audit complète. Le propriétaire est autorisé uniquement s'il est
+  Bureau/Direction, avec un motif d'au moins 10 caractères et un événement
+  `approval.self_approval_recorded` dédié. Un acteur ayant repris une correction
+  (`timesheet.correction_resumed`) n'est ni préparateur ni contrôleur : il peut
+  valider ensuite s'il dispose de `TimesheetValidate` et si un nouveau cycle de
+  transmission et de contrôle a été complété. Une piste n'est complète que si
+  chaque événement requis porte un `actor_id` non nul : un événement non attribué
+  (console, job) ne prouve jamais la traçabilité et fait refuser la validation.
+  `ApprovalRules` ne doit pas être utilisé seul : la validation finale passe par
+  le service et la policy du relevé.
+  **Limite :** la règle dépend de l'émission exhaustive des événements par les
+  services métier : 2B émet `created`, `updated` et `submitted`, 2C émet les
+  événements de contrôle, de validation et de réouverture. Une piste incomplète
+  ou non attribuable est refusée, jamais interprétée comme une absence de
+  participation. Aucun acteur n'est inventé pour les événements générés hors
+  requête utilisateur.
+- **Validateurs disponibles** : aucun nombre minimal de comptes
+  Bureau/Direction n'est imposé par le système. Un acteur qui a préparé ou
+  contrôlé un relevé ne peut pas le valider lui-même, sauf s'il en est le
+  propriétaire Bureau/Direction et fournit le motif d'auto-validation. Si
+  l'unique compte Bureau/Direction disponible a préparé ou contrôlé le relevé
+  d'un autre salarié, celui-ci reste en attente jusqu'à l'intervention d'un
+  second acteur habilité (`TimesheetValidate`). Ce délai est un risque
+  opérationnel accepté : il doit être anticipé par l'organisation.
+- **Verrouillage des segments** : l'édition d'un relevé n'est autorisée que sur
+  un `Brouillon`. L'incrément 2B applique cette règle côté serveur via la policy
+  du relevé et un verrou sur la ligne `timesheets` (voir §3.5) ; les services à
+  venir doivent conserver cette vérification sur le relevé réellement chargé et
+  ne jamais s'appuyer sur la seule interface ni sur un identifiant fourni par le
+  client.
+- **Portée de l'autorisation de transmettre** : la policy ne vérifie que
+  l'existence d'au moins un segment. Elle n'établit pas la complétude métier du
+  relevé. Les règles de complétude relèvent des incréments 2B/2C et ne sont pas
+  arbitrées ici.
+- **Séparation autorisation / complétude / exécution** : l'autorisation de
+  transmettre, la validation du contenu et de la complétude, et l'exécution
+  réelle de la transmission sont trois étapes distinctes. Aucune transmission
+  n'est exécutée en 2A ; elle sera implémentée dans un incrément ultérieur.
+- **Hors périmètre de 2A** : aucun service de brouillon, transmission,
+  contrôle, validation ou réouverture, aucune migration, aucune interface.
+
+### 3.5 Saisie et transmission des relevés (Lot 5, incrément 2B)
+
+- **Services** : `TimesheetService::openFor()` ouvre la semaine d'un salarié,
+  `TimesheetSegmentService` gère l'ajout, la modification et la suppression des
+  segments, `TimesheetSubmissionService::submit()` transmet un brouillon vers
+  `À contrôler`. `App\Support\TimesheetReason` normalise les motifs.
+- **Création** : la capacité `createFor` est appelée avec un `Timesheet`
+  non enregistré portant `employee_id` ; `create` n'est jamais appelée avec un
+  `Employee`. La semaine est calculée par `Timesheet::weekFor()` et jamais
+  fournie par le client. Un brouillon peut être créé pour un salarié sans
+  compte lié, mais seul un compte actif et lié pourra le transmettre.
+  Un relevé déjà existant pour la même semaine n'est retourné que si l'acteur
+  est autorisé à le consulter ; sinon l'opération est refusée sans divulguer
+  son existence, son statut ou son contenu. L'unicité
+  `(employee_id, period_start)` reste la garantie de dernier recours : après
+  une violation d'unicité, le service recharge le relevé et réapplique le
+  contrôle d'autorisation avant tout retour. Seule cette violation précise
+  (`1062`) est interceptée ; les autres erreurs SQL sont propagées.
+- **Bornes temporelles** : un segment doit commencer et finir dans la semaine
+  du relevé, du lundi 00:00 au dimanche 23:59 heure de `Europe/Paris`,
+  comparées en UTC. Un segment peut traverser minuit à l'intérieur de la
+  semaine ; il ne peut pas franchir la limite de semaine. La dernière minute
+  acceptée est le dimanche 23:59 ; le lundi 00:00 suivant est hors semaine.
+  Aucun arrondi n'est appliqué ; les secondes et fractions restent refusées.
+  La précision à la minute est centralisée dans
+  `App\Support\TimesheetMinutePrecision`, utilisée par le modèle, l'écriture
+  des segments et la transmission.
+  La règle des bornes est centralisée dans `App\Support\TimesheetWeekBounds`,
+  utilisée à l'écriture d'un segment et revalidée à la transmission.
+- **Concurrence** : toute écriture de segment et la transmission verrouillent
+  d'abord la ligne `timesheets` concernée (`lockForUpdate`), puis relisent le
+  statut, le propriétaire et, pour un segment, son appartenance au relevé
+  verrouillé. L'ordre de verrouillage est toujours relevé parent puis segment.
+  Un objet chargé avant un changement de statut est donc revalidé sous verrou.
+  L'audit est écrit dans la même transaction que la modification : une erreur
+  d'audit annule l'écriture métier.
+- **Transmission** : la transmission vers le contrôle (`À contrôler`) est
+  réservée au salarié propriétaire, avec un compte actif et lié ; le Bureau et
+  les responsables ne transmettent jamais à sa place vers le contrôle. Le
+  Bureau/Direction dispose d'un parcours distinct de transmission directe à la
+  validation finale après correction d'un brouillon (voir §3.6). La
+  transmission exige au moins un segment, revalide la précision à la minute et
+  les bornes de semaine de chaque segment existant, reste non bloquante pour
+  les avertissements de chevauchement et de durée supérieure à 720 minutes, et
+  est idempotente par état : un relevé déjà `À contrôler` est retourné sans
+  nouvel événement ; ce retour ne rejoue pas les contrôles de contenu et
+  n'écrit ni transition ni audit. Aucune clé d'idempotence réseau n'est
+  introduite (Lot 10).
+- **Avertissements de durée** : `WorkedTimeCalculator` signale tout segment
+  strictement supérieur à 720 minutes (12 h). La règle est appliquée à la
+  soumission et projetée en lecture par `TimesheetSummary::durationWarnings()`.
+  L'interface hebdomadaire et la fiche détail affichent cet avertissement de
+  façon non bloquante : aucun segment n'est déplacé, tronqué ou refusé du seul
+  fait de sa durée. Un segment de 720 minutes exactement n'est pas signalé ;
+  721 minutes le sont.
+- **Audit des segments** : les ajouts, modifications et suppressions réutilisent
+  `timesheet.updated`. L'événement porte `operation`, l'identifiant du segment,
+  `cycle_sequence` (séquence de la dernière frontière de cycle), les champs
+  modifiés et les valeurs utiles (catégorie, instants UTC). Une suppression
+  conserve l'identifiant et les valeurs supprimées sans prétendre que le segment
+  existe encore. Aucun motif n'est dupliqué dans `changes`.
+- **Motifs** : `TimesheetReason` applique `trim()`, refuse un motif obligatoire
+  absent, blanc ou inférieur à 10 caractères, borne à 500 caractères Unicode et
+  retourne la valeur normalisée. La même valeur doit servir à l'autorisation Gate
+  et à `audit_events.reason` ; aucune valeur par défaut n'est inventée.
+- **Cycle d'audit** : `TimesheetActorHistory` borne les événements de
+  complétude (`submitted`, `ready_for_validation`) après la dernière action
+  `timesheet.reopened` ou `timesheet.correction_resumed`, identifiée par la
+  séquence du journal et non par `occurred_at`. La création atteste l'origine
+  du relevé et reste exigée globalement : aucun nouvel événement `created`
+  n'est fabriqué lors d'une réouverture ou d'une reprise. La transmission et la
+  préparation à la validation doivent être postérieures à la frontière ; la
+  préparation doit en outre suivre la dernière transmission du cycle. Lorsque
+  plusieurs transmissions existent dans un même cycle (historique incohérent),
+  la dernière est retenue et seul un contrôle postérieur à celle-ci complète le
+  cycle ; plusieurs contrôles sont acceptés si l'un d'eux suit cette
+  transmission. Toute frontière de cycle sans acteur — pas seulement la
+  dernière — rend la validation impossible. Les exclusions de propriété, de
+  préparation et de contrôle restent globales, tous cycles confondus : un
+  ancien validateur ou réouvertureur n'est pas exclu du seul fait de ces
+  actions, et `correction_resumed` n'est pas une action de préparation.
+- **Contrat de verrouillage pour la validation (2C)** : le service
+  `TimesheetValidationService` ouvre une transaction, verrouille le relevé
+  parent avec `lockForUpdate()`, revalide les autorisations et le statut sur
+  l'instance verrouillée, puis lit la piste d'audit et vérifie la complétude du
+  cycle courant. La transition et l'événement `timesheet.validated` sont écrits
+  dans la même transaction. L'ordre de verrouillage reste relevé parent puis
+  segment, comme en 2B. Le service applique les exclusions existantes
+  (propriétaire, préparateur, contrôleurs) et n'ajoute aucune exclusion
+  automatique des validateurs ou réouvreurs précédents. Il refuse la validation
+  si la piste requise est incomplète ou non attribuable. Le contrôle et la
+  réouverture suivent le même modèle dans `TimesheetControlService` et
+  `TimesheetValidationService` (§3.6).
+- **Garde d'écriture** : `TimesheetSegment::updating` et
+  `TimesheetSegment::deleting` refusent toute modification ou suppression hors
+  brouillon en défense en profondeur. Le service reste l'autorité principale.
+  Limite : les mises à jour ou suppressions de masse Eloquent
+  (`query()->update()`, `query()->delete()`, `destroy()`) et les écritures
+  directes via Query Builder ne déclenchent pas les événements du modèle et ne
+  sont donc pas couvertes par ces gardes. Elles restent réservées aux
+  traitements d'import ou de maintenance, qui doivent revalider le statut du
+  relevé. Aucun trigger SQL n'est ajouté.
+- **Reporté** : le motif obligatoire pour une journée attendue sans heure
+  dépend du planning et des absences (Lot 7). Le contrôle, la reprise de
+  correction, la validation finale, la réouverture, le contrôle groupé,
+  l'interface et l'idempotence réseau restent hors de 2B. Aucune migration n'est
+  nécessaire à cet incrément.
+
+### 3.6 Contrôle, correction et validation (Lot 5, incrément 2C)
+
+- **Services** : `TimesheetControlService` gère le retour en correction
+  (`requestCorrection`, motif obligatoire), la reprise (`resumeCorrection`), la
+  préparation à la validation (`markReadyForValidation`, motif obligatoire) et
+  la transmission directe d'un brouillon corrigé par le Bureau/Direction
+  (`sendToValidation`, motif obligatoire). `TimesheetValidationService` gère la
+  validation finale (`validate`) et la réouverture motivée (`reopen`).
+- **Transitions** : seules celles de `TimesheetStatus` sont exécutées :
+  `Brouillon → À contrôler` (salarié propriétaire),
+  `Brouillon → Prête pour validation` (Bureau/Direction, correction directe),
+  `À contrôler → À corriger`, `À corriger → Brouillon`,
+  `À contrôler → Prête pour validation`, `Prête pour validation → Validée` et
+  `Validée → Brouillon`. Aucune autre transition n'est acceptée.
+- **Autorisations et séparation** : chaque service verrouille le relevé parent
+  avec `lockForUpdate()`, recharge son statut, puis appelle la policy sur
+  l'instance verrouillée. Le contrôle exige `timesheet.validate` ou le périmètre
+  historique ; la validation finale reste réservée à `timesheet.validate` et
+  refuse un préparateur et un contrôleur. L'auteur d'une transmission directe
+  est traité comme contrôleur : il ne peut pas valider ensuite un relevé dont il
+  n'est pas propriétaire. Le propriétaire Bureau/Direction peut s'auto-valider
+  avec un motif d'au moins 10 caractères et un événement dédié.
+  L'acteur ayant repris une correction n'est pas exclu : il peut valider après
+  un nouveau cycle complet s'il dispose de `timesheet.validate`. Le chef
+  d'équipe, le conducteur de travaux et l'Administrateur ne peuvent jamais
+  valider. La réouverture exige `timesheet.validate` et `workflow.reopen`. Les
+  anciens validateurs ou réouvertureurs ne sont pas exclus du seul fait de ces
+  actions. Un compte inactif est refusé avant toute transition, y compris après
+  rechargement du relevé sous verrou.
+- **Motifs** : les motifs de retour en correction, de préparation à la
+  validation, de transmission directe, de réouverture et d'auto-validation sont normalisés une seule fois
+  par `TimesheetReason` ; la même valeur sert à l'autorisation et à
+  `audit_events.reason`. Un motif obligatoire comporte entre 10 et 500
+  caractères après `trim()`. Les transitions sans motif obligatoire n'en
+  inventent aucun. L'autorisation est vérifiée avant le contenu du motif : un
+  acteur non habilité reçoit un refus d'autorisation, jamais une erreur de
+  validation métier.
+- **Audit et atomicité** : chaque transition écrit son événement dans la même
+  transaction que le changement de statut :
+  `timesheet.returned_for_correction`, `timesheet.correction_resumed`,
+  `timesheet.ready_for_validation`, `timesheet.sent_to_validation`,
+  `timesheet.validated` et `timesheet.reopened`. Une erreur d'audit annule la
+  transition.
+- **Répétition** : une requête répétée est refusée par la matrice d'états et ne
+  crée ni transition ni événement. Seule la transmission reste idempotente par
+  état (voir §3.5), sans clé d'idempotence réseau.
+- **Reporté** : le contrôle groupé, les tableaux de bord et l'interface restent
+  hors périmètre de 2C. Le motif obligatoire d'une journée attendue sans heure
+  reste différé au Lot 7. Aucune migration n'était nécessaire pour 2C.
+- **Correction directe du Bureau/Direction (PC1-13/PC1-33)** : après correction
+  effective d'un brouillon, le Bureau/Direction peut le transmettre directement
+  à la validation finale avec `TimesheetControlService::sendToValidation()`. La
+  transition `Brouillon → Prête pour validation` est réservée au rôle
+  Bureau/Direction disposant de `timesheet.validate`, exige un motif normalisé
+  de 10 à 500 caractères, une correction effective de segment par le même acteur
+  dans le cycle courant et revalide sous verrou l'existence et les bornes des
+  segments. `TimesheetActorHistory::hasCorrectedInCurrentCycle()` ne retient que
+  les événements `timesheet.updated` attribués au même acteur et postérieurs à
+  la dernière frontière de cycle : une création ou une suppression de segment
+  compte, une modification ne compte que si les valeurs avant/après diffèrent.
+  L'événement `timesheet.sent_to_validation` porte l'acteur, son rôle,
+  l'horodatage, le motif et les statuts avant/après avec
+  `path = bureau_correction`. `TimesheetActorHistory` accepte cet événement
+  attribué comme preuve de complétude du cycle courant et l'inclut dans les
+  actions de contrôle : l'auteur ne peut pas valider ensuite un relevé dont il
+  n'est pas propriétaire. La fiche détail expose au Bureau/Direction un
+  formulaire d'ajout, de modification et de suppression des segments d'un
+  brouillon d'un autre salarié ; les écritures passent exclusivement par
+  `TimesheetSegmentService` et restent auditées avant/après. Le propriétaire
+  Bureau/Direction conserve l'auto-validation motivée déjà définie en PC1-32.
+  Les chefs d'équipe et les conducteurs de travaux ne peuvent ni corriger ce
+  brouillon, ni transmettre directement, ni s'auto-valider. Le parcours normal
+  du salarié (`Brouillon → À contrôler → Prête → Validée`) reste inchangé.
+- **Revue des chevauchements (PC1-32, Lot A)** : `TimesheetOverlapDetector`
+  reste la source de détection, avec ses avertissements non bloquants à la
+  transmission. `TimesheetOverlapReviewService` persiste l'état courant dans
+  `timesheet_overlap_reviews` : paire canonique
+  `min(segment_id):max(segment_id)`, empreinte SHA-256 des deux segments et de
+  leurs relevés (identifiants, salariés, catégories, instants UTC et offsets),
+  cycle de correction, décision, motif normalisé, auteur et date. Une nouvelle
+  décision remplace l'état courant ; l'historique immuable reste dans
+  `audit_events` via `timesheet.overlap_review_accepted` et
+  `timesheet.overlap_review_rejected`. La permission dédiée
+  `timesheet.overlap-review`, réservée au rôle Bureau/Direction, autorise la
+  revue uniquement en `a_controler` ou `prete_pour_validation`. Le cycle courant
+  est la séquence du dernier `timesheet.reopened` ou
+  `timesheet.correction_resumed` : un nouveau cycle invalide les revues
+  précédentes. `TimesheetValidationService` refuse la validation si un
+  chevauchement courant n'est pas revu, si son empreinte ou son cycle ne
+  correspond plus, ou si la décision est rejetée. Une paire supprimée par
+  correction ne bloque plus ; une revue devenue obsolète reste consultable dans
+  l'audit.
+- **Validation en masse (PC1-32, Lot B)** :
+  `TimesheetBatchValidationService` est réservé au rôle Bureau/Direction
+  disposant de `timesheet.validate`. La sélection est dédupliquée puis bornée à
+  50 relevés distincts et à des identifiants entiers positifs ; une sélection
+  vide, malformée ou trop grande est refusée avant tout traitement. Chaque
+  relevé est confié à `TimesheetValidationService`, qui réapplique sous verrou
+  toutes les règles individuelles, y compris la séparation des tâches,
+  l'auto-validation motivée et la revue des chevauchements. Aucune transaction
+  globale n'entoure le lot : chaque validation réussie ou refusée dispose de sa
+  propre transaction. Le résultat expose le total demandé, les succès, les
+  échecs, l'indicateur de succès partiel et un détail par relevé. Les événements
+  `timesheet.validated` restent individuels ; aucun événement global n'est
+  ajouté.
+
+### 3.7 Interfaces métier des feuilles de temps (PC1-32, Lot D)
+
+- **Espace indépendant de Filament** : les interfaces métier sont des
+  composants Livewire plein écran sous `/espace`, avec un layout dédié
+  (`layouts.workspace`). Filament reste le panneau d'administration et n'est
+  pas transformé en interface salarié. Un lien « Espace métier » est ajouté à
+  la consultation mobile du planning prévisionnel et au menu utilisateur
+  Filament du Bureau/Direction.
+- **Entrée et tableaux de bord** : `/espace` redirige vers l'espace
+  correspondant aux capacités réellement accordées : Bureau/Direction
+  (`timesheet.validate`), responsable de périmètre (`timesheet.control`) ou
+  salarié (`timesheet.own`). Les tableaux de bord salarié, chef d'équipe et
+  Bureau/Direction lisent des compteurs réels ; aucun compteur n'est saisi ni
+  simulé.
+- **Routes** : `/espace/salarie` et `/espace/salarie/semaine/{week?}` pour le
+  salarié ; `/espace/equipe` pour le responsable ; `/espace/bureau`,
+  `/espace/bureau/validation-en-masse` et `/espace/bureau/journal` pour le
+  Bureau/Direction ; `/espace/releves`, `/espace/releves/file/{queue}` et
+  `/espace/releves/{timesheet}` pour les listes et la fiche partagée. Les files
+  sont `a-controler`, `pretes`, `a-corriger`, `validees` et `chevauchements`.
+- **Composants Livewire** : `Timesheets\EmployeeDashboard`,
+  `Timesheets\WeeklyTimesheet`, `Timesheets\TeamDashboard`,
+  `Timesheets\BureauDashboard`, `Timesheets\TimesheetList`,
+  `Timesheets\TimesheetDetail`, `Timesheets\Bureau\BatchValidation` et
+  `Timesheets\Bureau\Journal`. Les composants ne portent aucune règle métier :
+  ils préparent les données, présentent les erreurs des services et délèguent
+  chaque écriture.
+- **Services de lecture ajoutés** : `TimesheetQuery` applique la portée
+  autorisée en SQL avant pagination (Bureau complet, responsable via
+  `team_assignments`/`team_leaderships` historisés, salarié propriétaire) ;
+  `TimesheetSummary` regroupe les segments par jour local et délègue les durées
+  à `WorkedTimeCalculator` ; `TimesheetHistory` projette le journal d'audit
+  sans inventer d'acteur, de motif ou de décision ; `TimesheetOverlapOverview`
+  rapproche les paires détectées, la revue courante et les décisions
+  historisées, et signale une revue obsolète lorsque le cycle ou l'empreinte a
+  changé.
+- **Réutilisation des lots A/B/C** : la saisie utilise
+  `TimesheetService`/`TimesheetSegmentService`, la transmission
+  `TimesheetSubmissionService`, le contrôle et la reprise
+  `TimesheetControlService`, la validation et la réouverture
+  `TimesheetValidationService`, la revue `TimesheetOverlapReviewService` et la
+  validation en masse `TimesheetBatchValidationService`. Aucun de ces services
+  n'est réimplémenté dans Livewire.
+- **Sécurité** : toutes les routes sont derrière `auth` et
+  `EnsureAccountIsActive`. Les composants appellent `viewAny`/`view` à chaque
+  requête Livewire ; `TimesheetList` réapplique la portée à chaque rendu et
+  revalide l'accès aux files dans `booted()`, y compris après modification d'une
+  propriété publique. La fiche porte un identifiant `#[Locked]`, recharge
+  toujours le modèle et ne fait jamais confiance aux données du client. Les
+  actions revérifient les motifs côté serveur via les services et policies ;
+  un chef d'équipe ne peut ni valider ni examiner un chevauchement, y compris
+  par appel direct d'une méthode Livewire.
+- **Historique** : la fiche affiche une chronologie issue uniquement
+  d'`audit_events`. Le journal global Bureau/Direction est en lecture seule,
+  filtré côté serveur par période, salarié, relevé, acteur et type d'événement,
+  avec pagination. Un salarié ne voit que l'historique de ses propres relevés ;
+  un responsable uniquement celui de son périmètre ; le journal transversal
+  reste réservé au Bureau/Direction.
+- **Responsive** : le planning hebdomadaire passe d'une grille de sept colonnes
+  sur ordinateur à sept cartes empilées sur mobile, sans défilement horizontal
+  imposé. Les listes disposent d'une version cartes sur mobile et d'un tableau
+  sur ordinateur. Aucune règle métier ne dépend du terminal.
+- **Limites** : aucun mode hors ligne ni file de synchronisation n'est ajouté
+  dans ce lot. Les compteurs de chevauchements à examiner recalculent les paires
+  des relevés en attente à chaque affichage ; ce coût est acceptable pour le
+  volume du MVP et devra être mesuré avant une montée en charge. Le Bureau
+  consulte et valide les relevés, mais la modification des segments d'un
+  brouillon reste proposée au salarié propriétaire via sa semaine ; les
+  services et policies conservent leurs capacités existantes.
 
 Ne pas installer, mettre à jour ou remplacer une dépendance majeure sans
 examiner sa compatibilité et justifier le changement. Les versions
@@ -194,6 +723,31 @@ personnels non nécessaires dans les journaux.
 
 Les opérations groupées du chef d'équipe doivent produire une trace
 distincte par relevé.
+
+### 7.1 Chantiers et clients (PC1-28)
+
+Le référentiel des statuts de chantier et la matrice des transitions sont
+centralisés dans `App\Enums\SiteStatus`. La colonne `sites.status` reste une
+chaîne courte ; les valeurs historiques connues sont normalisées par migration.
+Toute transition ordinaire ou réouverture passe par `App\Services\Sites\SiteService`,
+qui vérifie la matrice, les motifs, les permissions et écrit l'audit dans la même
+transaction. Les formulaires Filament ne permettent pas de saisir un statut
+libre.
+
+L'archivage d'un client est conditionné à l'absence de chantier non terminal ;
+les chantiers archivés sont inclus dans le contrôle. L'archivage et la
+restauration d'un client sont indépendants de l'archivage des chantiers. La
+restauration exige la permission dédiée `clients.restore`, distincte de
+`clients.manage`. La réouverture d'un chantier exige `sites.reopen`, distincte de
+`sites.manage`.
+
+Les clients et les chantiers ne sont jamais supprimés physiquement : les
+policies refusent la suppression et les modèles bloquent l'événement `deleting`.
+L'archivage est le seul mécanisme de retrait.
+
+Les adresses clients sont structurées ; le champ historique `address` est
+conservé sans découpe automatique. Les doublons de raison sociale ou d'e-mail
+sont signalés après enregistrement, sans contrainte d'unicité ni blocage.
 
 ## 8. PWA et synchronisation
 

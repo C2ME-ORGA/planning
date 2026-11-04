@@ -39,6 +39,34 @@ coller dans un ticket.
 
 Après activation, la 2FA TOTP est exigée à la première connexion.
 
+### Création d'un compte Bureau / Direction supplémentaire
+
+Le mode initial ci-dessus reste réservé au premier compte. Pour créer un compte
+supplémentaire (notamment un compte suppléant), un compte Bureau / Direction
+actif doit autoriser l'opération :
+
+```bash
+php artisan planning:bootstrap-bureau suppleant@example.test \
+    --name="Nom du suppléant" \
+    --additional \
+    --actor=direction@example.test \
+    --confirm
+```
+
+Règles :
+
+- l'acteur doit être un compte actif ayant les capacités de création de compte
+  et d'attribution de rôle, et son rôle doit être Bureau / Direction ;
+- l'adresse e-mail doit être unique ; aucun compte existant n'est promu ;
+- le nouveau compte reçoit le rôle Bureau / Direction standard, sans privilège
+  supplémentaire ;
+- la création et son acteur sont inscrits au journal d'audit ;
+- un lien d'activation à usage unique est envoyé ; le titulaire définit lui-même
+  son mot de passe ;
+- la 2FA TOTP reste obligatoire à la première connexion.
+
+Ne jamais partager les identifiants du titulaire principal ou du suppléant.
+
 ## 2. Gestion des comptes
 
 - Création, changement de rôle, désactivation et réactivation : panneau
@@ -54,18 +82,20 @@ Après activation, la 2FA TOTP est exigée à la première connexion.
   compte concerné. Les changements de rôle et désactivations verrouillent aussi
   l'ensemble des comptes Bureau/Direction actifs, dans un ordre stable, afin de
   ne jamais retirer les deux derniers simultanément.
-- La révocation SQL exige `SESSION_DRIVER=database`. Tout autre pilote est
-  refusé explicitement avant toute écriture : la désactivation ou la révocation
-  échoue et sa transaction est annulée. Le filtre serveur
+- La révocation logique est prioritaire et transactionnelle. Le nettoyage
+  physique de la table `sessions` n'est tenté que si `SESSION_DRIVER=database`.
+  Avec `file`, `redis`, `cookie`, `array` ou un autre pilote, il est
+  explicitement non applicable et aucune requête SQL n'est émise ; la
+  désactivation et la révocation restent effectives. Le filtre serveur
   `EnsureAccountIsActive` reste un garde-fou pour les sessions déjà ouvertes.
 - La connexion utilisée est `SESSION_CONNECTION` lorsqu’elle est définie, sinon
-  la connexion par défaut. La table et les colonnes `id`/`user_id` sont
-  contrôlées sur cette connexion. Une connexion inconnue ou indisponible, une
-  table absente ou incomplète provoquent un refus avant toute mutation.
+  la connexion par défaut. La table ciblée est `SESSION_TABLE` (ou `sessions`).
+- Une erreur pendant le nettoyage physique est journalisée (`report()` et
+  `Log::warning`) sans annuler la révocation logique déjà acquise. Une erreur
+  pendant l'invalidation logique est propagée : aucune purge n'est tentée.
 - Avec une connexion de sessions distincte, la suppression des sessions et le
   renouvellement des remember tokens ne peuvent pas partager une transaction
-  SQL unique : chaque opération est transactionnelle sur sa connexion, mais
-  l’atomicité entre les deux connexions n’est pas garantie.
+  SQL unique : chaque opération est transactionnelle sur sa connexion.
 
 ## 3. Double authentification
 
@@ -193,64 +223,91 @@ ces événements ou après ré-ancrage documenté.
 ## 6. Urgence et révocation de session
 
 ```bash
-php artisan planning:emergency-lockdown --confirm
+php artisan planning:emergency-lockdown \
+  --actor=bureau@example.test \
+  --reason="Incident de sécurité : compromission suspectée." \
+  --confirm
 ```
 
 Révoque toutes les sessions et jetons persistants. La commande **n'accorde
 aucun droit** et ne constitue pas un break-glass. Les utilisateurs doivent se
 réauthentifier, 2FA comprise.
 
-La configuration d'audit et le pilote de session sont validés avant toute
-action. Seul `SESSION_DRIVER=database` est accepté : avec `file`, `redis` ou un
-pilote non pris en charge, la commande échoue explicitement sans supprimer de
-session et sans renouveler de remember token. La connexion utilisée est
-`SESSION_CONNECTION` si elle est définie, sinon la connexion par défaut.
+L’acteur doit être un compte actif disposant de `accounts.update` (Bureau /
+Direction). Le motif est obligatoire (10 à 500 caractères). Un événement
+`system.emergency_lockdown_requested` est écrit avant l’action. Si cet audit
+d’intention échoue, la commande refuse de démarrer : aucune session n’est
+révoquée. En environnement automatisé, l’acteur et le motif doivent donc être
+fournis explicitement ; aucun acteur fictif n’est accepté.
 
-Avec la connexion par défaut, la révocation et l'événement d'audit sont dans une
-transaction commune : si l'audit échoue, les sessions et remember tokens sont
-restaurés. Avec une connexion de sessions distincte, la suppression des sessions
-est validée sur cette connexion et ne peut pas être annulée par le rollback de
-la transaction d'audit de la connexion par défaut. La commande ne doit jamais
-annoncer une révocation réussie si elle a échoué.
+La commande incrémente la génération globale d'authentification et invalide
+tous les cookies remember-me dans une transaction unique. Dès ce commit, les
+anciennes sessions sont refusées à la requête suivante, même si le nettoyage
+physique échoue. La suppression SQL cible `session.connection` /
+`session.table` et n'est requise que pour le pilote `database`.
 
-Messages de retour :
+Si le nettoyage physique échoue, la commande retourne un échec opérationnel,
+mais l'audit `EmergencyLockdown` indique `fully_completed = false` avec la
+génération globale active : la révocation logique reste effective. Vérifier
+ensuite le stockage de sessions et relancer le nettoyage si nécessaire.
 
-- `Configuration d’audit invalide` : aucune action n’a été exécutée.
-- `Opération non exécutée : aucune session n’a été supprimée` : échec avant
-  mutation, notamment pilote, connexion, table ou colonnes invalides.
-- `Révocation annulée : aucune session n’a été supprimée` : échec avec rollback
-  sur la connexion par défaut.
-- `Révocation partielle : N session(s) supprimée(s)` : des sessions ont été
-  supprimées sur une connexion distincte, les remember tokens ont été renouvelés,
-  mais l’audit n’a pas été enregistré, ou le renouvellement des tokens a échoué.
-  Une vérification opérationnelle est obligatoire.
-- `Révocation incomplète : aucune session n’a été supprimée` : aucune session
-  n’existait sur la connexion dédiée ; les remember tokens ont été renouvelés,
-  mais l’audit n’a pas été enregistré. Une vérification reste nécessaire.
+Les états de nettoyage sont explicites : `physical_cleanup_state` vaut
+`completed`, `failed` ou `not_applicable`. `fully_completed` n'est faux que
+pour un échec physique requis.
 
-Procédure de diagnostic après une `Révocation partielle` ou `incomplète` :
+### Vérification après révocation globale
 
-1. Identifier la connexion utilisée (`SESSION_CONNECTION` ou connexion par
-   défaut).
-2. Vérifier la présence de la table de sessions et des colonnes `id`/`user_id`
-   sur cette connexion.
-3. Compter les sessions restantes sur la connexion de sessions.
-4. Vérifier les `remember_token` des comptes concernés.
-5. Vérifier la présence de l’événement `EmergencyLockdown` dans le journal
-   d’audit.
-6. Consigner le résultat, ne pas relancer aveuglément, et déclencher une
-   intervention si les sessions ou les jetons ne sont pas dans l’état attendu.
+- L'audit `system.emergency_lockdown_requested` contient l’acteur et le motif.
+- L'audit `system.emergency_lockdown` contient `global_generation`,
+  `physical_cleanup_required`, `physical_cleanup_state`,
+  `physical_cleanup_error` et `fully_completed`.
+- Une ancienne session ou un ancien cookie remember-me doit être redirigé vers
+  `/login` ou `/admin/login`.
+- Une nouvelle connexion doit fonctionner pour un compte actif et rouvrir une
+  session portant la nouvelle génération.
+
+### Retour arrière interdit sur le schéma de sécurité
+
+Les migrations `authentication_state` et `users.session_version` refusent leur
+`down()` : supprimer la table réinitialiserait la génération globale et pourrait
+rendre valides des sessions d’une génération antérieure ; supprimer la colonne
+`session_version` désactiverait le contrôle de révocation individuelle. Un
+retour arrière nécessite une intervention manuelle encadrée :
+
+1. arrêter le code PC1-12 ou maintenir le contrôle de génération actif ;
+2. révoquer toutes les sessions et tous les jetons remember-me ;
+3. purger les stockages `file`/`redis`/`database` concernés ;
+4. seulement ensuite, retirer la table selon la procédure d’exploitation.
+
+Ne jamais exécuter `migrate:rollback` sur le batch de sécurité en production.
 
 ## 7. Vérifications avant mise en service
 
+- Appliquer les migrations de sécurité **avant** les migrations métier sans
+  rapport, afin que le code ne tourne jamais sans `authentication_state` ni
+  `users.session_version` :
+
+  ```bash
+  php artisan planning:security:install
+  php artisan planning:security:install --check
+  ```
+
+  La commande applique les deux migrations de sécurité dans des batches dédiés
+  (une migration par batch : `authentication_state`, puis
+  `users.session_version`) et vérifie le schéma.
+  Elle est indépendante des migrations de feuilles de temps. Les migrations
+  sont additives et ne modifient aucune donnée existante.
+  `2026_10_27_000007` est volontairement antérieure aux migrations métier ;
+  `2026_11_02_000001` est appliquée explicitement par la commande.
 - `php artisan migrate --pretend` relu, puis migration contrôlée.
 - `php artisan planning:audit:verify` sur une base vierge puis après tests.
 - `php artisan test`, `composer lint:check`, `composer types:check` verts.
 - `APP_KEY` défini et sauvegardé séparément ; `PLANNING_AUDIT_KEY` distincte et
   sauvegardée séparément ; `APP_DEBUG=false` ;
   `SESSION_SECURE_COOKIE=true` en HTTPS.
-- `SESSION_DRIVER=database` : indispensable pour la révocation SQL des
-  sessions et pour la désactivation immédiate des comptes.
+- `SESSION_DRIVER=database` : recommandé pour permettre le nettoyage physique
+  des sessions ; sans ce pilote, la révocation logique reste effective et le
+  nettoyage physique est simplement non applicable.
 - Si `SESSION_CONNECTION` est défini, vérifier que cette connexion pointe vers
   la base contenant la table de sessions et que l’utilisateur applicatif y
   dispose des droits de lecture et de suppression.
@@ -271,5 +328,70 @@ Procédure de diagnostic après une `Révocation partielle` ou `incomplète` :
   du dépôt, interprétés de façon conservatrice.
 - Politique de conservation, sauvegardes chiffrées, supervision et procédure
   de restauration : lot 11.
-- Aucun module de planning, de relevé ou d'absence n'est encore implémenté ;
-  les permissions correspondantes sont posées mais non exercées par une UI.
+- Durée d'activation validée à 24 heures (1 440 minutes).
+- État des modules métier dans l'arbre fusionné, à ne pas confondre avec une
+  validation de production :
+  - **présents dans le code et couverts par des tests** : RH et équipes (Lot 3),
+    clients et chantiers (Lot 4), planning à la demi-journée et relevés/workflow
+    (Lot 5) ;
+  - **validés fonctionnellement** : authentification, rôles, permissions et
+    audit du Lot 2 (validation acquise le 26/10/2026 sur `master`) ;
+  - **en cours ou à confirmer** : recette complète des relevés (PC1-31), recette
+    de la correction/réouverture (PC1-33), recette mobile du Lot 4 ;
+  - **restant à livrer** : calculs et compteurs (Lot 6), absences et indemnités
+    (Lot 7), clôtures et exports (Lot 8), notifications et signalements (Lot 9),
+    PWA hors ligne (Lot 10), sauvegardes et production (Lot 11).
+  Aucun de ces éléments n'est réputé déployé en production.
+
+## 9. Points non couverts par le lot 3
+
+- Champs RH non explicitement spécifiés (matricule, coordonnées, date de
+  naissance, contrat, poste) : non créés.
+- Les périodes d'emploi sont append-only dans l'interface et au niveau du
+  modèle : seules la clôture d'une période ouverte et l'ajout d'une nouvelle
+  période sont autorisés. Une réembauche ajoute une période.
+- **Procédure de correction rétroactive absente** : aucune décision ne définit
+  qui peut corriger, quels champs sont corrigeables, si la correction peut
+  traverser des périodes clôturées, ni comment revalider les affectations et
+  responsabilités dépendantes. Ne pas implémenter cette procédure sans
+  arbitrage. Décisions minimales à obtenir : acteur habilité, motif obligatoire,
+  champs et périodes concernés, conservation avant/après, effet sur les
+  affectations, responsabilités et audits.
+- La sortie propose une désactivation explicite du compte applicatif lié. Sans
+  confirmation, le compte reste actif. Avec confirmation, la désactivation est
+  immédiate et atomique avec la sortie et l'audit ; elle n'est acceptée que pour
+  une sortie effective aujourd'hui ou dans le passé. Elle est refusée si une
+  responsabilité d'équipe couvre encore la date effective de désactivation
+  (dates inclusives, end_date >= aujourd'hui) : enregistrez la sortie sans
+  désactivation, ou clôturez/réaffectez la responsabilité avant de réessayer.
+- Une affectation déjà commencée ne peut pas être annulée ; elle doit être
+  clôturée à une date de fin. Une affectation future peut être annulée avec
+  motif et reste conservée dans l'historique.
+- Les verrous nommés utilisent `PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS`
+  (5 secondes par défaut). L'ordre est équipe puis salariés triés par
+  identifiant. Une attente dépassée refuse l'écriture, elle ne la valide pas.
+- Le lot 3 attend la validation humaine avant toute suite.
+
+
+## 10. Connexion des utilisateurs terrain
+
+Les ouvriers, chefs d'équipe et conducteurs de travaux utilisent `/login`, puis sont dirigés vers le planning mobile `/planning`. Le compte doit être actif et avoir terminé son activation. La connexion au panneau d'administration reste distincte sur `/admin/login` et demeure réservée aux rôles Administrateur et Bureau / Direction avec 2FA obligatoire.
+
+En cas d'échec de connexion, vérifier l'adresse e-mail, le mot de passe et l'état d'activation du compte dans `/admin/users`. Ne pas promouvoir un compte terrain en Bureau / Direction pour contourner le contrôle d'accès.
+
+
+## PC1-14 — Suppléance Bureau / Direction
+
+La procédure détaillée est décrite dans `docs/PC1-14-PROCEDURE-URGENCE.md`.
+
+- Suppléant : Corentin Doizy, Gérant, compte `c.doizy@c2me.ovh`.
+- Compte nominatif permanent, rôle Bureau / Direction standard, identifiants et MFA propres.
+- Corentin peut déclencher lui-même la suppléance lorsqu'il constate l'indisponibilité du titulaire principal ; aucun accord préalable n'est requis.
+- La prise de relais s'effectue avec le compte propre du suppléant. Le partage d'identifiants et l'utilisation de la session du titulaire principal sont interdits.
+- La suppléance n'est ni une élévation de privilèges ni un mécanisme break-glass.
+- `planning:emergency-lockdown` reste une révocation globale des sessions, sans octroi de droits.
+- Après chaque prise de relais exceptionnelle liée à un incident, une personne physique habilitée réalise une revue ; `direction@c2me.ovh` est le compte de référence.
+- Contrôle trimestriel et après toute évolution importante de l'authentification, des rôles ou permissions, sous la responsabilité du titulaire habilité de `direction@c2me.ovh`, avec participation de Corentin.
+- Aucun secret d'authentification ne doit figurer dans les preuves.
+
+La validation formelle et les preuves de contrôle restent à enregistrer avant clôture du ticket.

@@ -1,70 +1,68 @@
 # Planning C2ME
 
-Application Laravel indépendante pour la gestion du planning et des relevés
-d'heures de SARL C2ME. Le dépôt est actuellement au socle technique du lot 0 :
-aucune fonctionnalité métier (salariés, chantiers, relevés, exports) n'est
-encore implémentée.
+Application Laravel indépendante de SARL C2ME pour la gestion des salariés, des équipes, des clients, des chantiers, du planning et des relevés d'heures.
+
+> **État de référence :** branche `develop`, après fusion de la PR #15 le 1er novembre 2026. Cette branche constitue l'état de développement vérifié ici ; elle ne signifie pas que ces fonctionnalités sont déployées en production.
+
+## État fonctionnel sur develop
+
+| Domaine | État constaté |
+|---|---|
+| Socle Laravel, Filament, Livewire, MySQL et CI | Présent |
+| Authentification, activation, rôles, permissions et MFA | Implémenté sur develop |
+| Journal d'audit cryptographique | Implémenté sur develop |
+| Salariés, périodes d'emploi et équipes | Implémenté |
+| Clients et chantiers | Implémenté |
+| Planning à la demi-journée et affectations | Implémenté |
+| Relevés, segments horaires et soumission | Socle implémenté |
+| Contrôle, correction, revue des chevauchements et validation | Workflow livré par PR #15 ; recette métier à poursuivre |
+| Calculs horaires et compteurs | À développer |
+| Absences, indemnités et avances | À développer |
+| Clôtures et exports | À développer |
+| Notifications et signalements | À développer |
+| PWA hors ligne et synchronisation | À développer |
+| Sauvegardes, restauration et préparation de production | À finaliser |
+
+Les états détaillés, limites et critères de sortie sont dans [ROADMAP.md](ROADMAP.md) et [docs/STATUS_RECONCILIATION.md](docs/STATUS_RECONCILIATION.md).
 
 ## Socle technique
 
 - PHP 8.4
 - Laravel 13
 - Livewire 4
-- Filament 5 pour le panneau d'administration
-- MySQL 8 pour tous les environnements
-- Pest, Laravel Pint et Larastan/PHPStan
-- Tailwind CSS et Vite Plus
-- GitHub Actions pour la CI
-
-## Prérequis
-
-- PHP 8.4 avec les extensions `pdo_mysql`, `intl`, `mbstring`, `gd` et `zip`
-- Composer 2
-- Node.js 22.18.0 ou une version compatible (`^22.18.0 || ^24.11.0 || >=26.0.0`)
+- Filament 5
 - MySQL 8
+- Pest, Laravel Pint, Larastan/PHPStan
+- Vite Plus et GitHub Actions
 
-Avec nvm : `nvm install` puis `nvm use` à la racine du dépôt.
+Les versions exactes doivent être lues dans `composer.lock`, `package-lock.json`, `.nvmrc` et les workflows de la branche utilisée.
 
-## Installation locale
+## Prérequis et installation
+
+- PHP 8.4 avec `pdo_mysql`, `intl`, `mbstring`, `gd` et `zip`
+- Composer 2
+- Node.js conforme à `.nvmrc`
+- MySQL 8
 
 ```bash
 composer install
 cp .env.example .env
 php artisan key:generate
-```
-
-Sous PowerShell, remplacer `cp` par `Copy-Item`.
-
-Créer deux bases MySQL distinctes : une pour le développement et une pour les
-tests automatisés.
-
-```sql
-CREATE DATABASE planning_c2me
-    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-CREATE DATABASE planning_c2me_test
-    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-```
-
-Renseigner ensuite dans `.env` les paramètres `DB_*`, puis exécuter :
-
-```bash
-php artisan migrate
 npm ci
 npm run build
+php artisan migrate
 php artisan filament:assets
 ```
 
-L'application est servie par Herd à l'adresse `https://planning.c2me.test/`.
-Adapter `APP_URL` si un autre nom d'hôte est utilisé.
+Sous PowerShell, utiliser `Copy-Item .env.example .env` à la place de `cp`.
 
-## Panneau d'administration
+Créer une base de développement et une base de test distinctes. Ne jamais lancer les tests sur une base de développement ou de production. Renseigner les variables `DB_*` dans `.env` avant les migrations.
 
 Le panneau Filament est disponible sur `/admin`. L'accès dépend exclusivement du
 rôle du compte, contrôlé côté serveur (`canAccessPanel()`), et non plus d'une
 liste d'adresses. Seuls les rôles **Administrateur** et **Bureau/Direction**
-ouvrent le panneau ; les autres rôles n'ont aucun accès à l'interface
-d'administration.
+ouvrent le panneau ; les autres rôles utilisent les espaces métier `/planning`
+et `/espace`, protégés par les mêmes permissions serveur.
 
 La double authentification TOTP (avec codes de récupération) est obligatoire
 pour tous les comptes du panneau. Un compte sans second facteur est redirigé
@@ -112,12 +110,21 @@ trop courte ou identique à `APP_KEY`.
 php artisan planning:audit:verify
 
 # Révoquer toutes les sessions (urgence, n'accorde aucun droit)
-php artisan planning:emergency-lockdown --confirm
+php artisan planning:emergency-lockdown \
+    --actor=direction@example.test \
+    --reason="Incident de sécurité : compromission suspectée." \
+    --confirm
 
 # Réinitialiser la 2FA d'un compte après perte d'accès
 php artisan planning:mfa:reset agent@example.test \
     --actor=direction@example.test --reason="Perte de téléphone" --confirm
 ```
+
+Dans ces exemples, les adresses `direction@example.test` et `agent@example.test`
+sont des valeurs fictives à remplacer par des comptes réels actifs. Le compte
+passé à `--actor` doit exister, être actif et disposer de la permission requise :
+`accounts.update` pour le verrouillage d'urgence. Le motif est obligatoire
+(10 à 500 caractères).
 
 Les exceptions de permission sont accordées et révoquées uniquement en ligne de
 commande, avec acteur Bureau/Direction, motif d'au moins 10 caractères et
@@ -137,62 +144,38 @@ production.
 php artisan test
 composer test
 composer test:coverage
-```
-
-`composer test:coverage` applique un seuil progressif de 35 %. L'objectif de
-70 % puis 80 % reste la cible du projet et ne remplace pas les tests spécifiques
-des fonctions critiques.
-
-## Qualité
-
-```bash
-composer lint          # Pint, correction
-composer lint:check    # Pint, vérification
-composer types:check   # PHPStan/Larastan, mémoire limitée à 1 Go
-composer ci:check      # Pint + PHPStan + tests avec couverture
-npm run build          # compilation front-end
-```
-
-PHPStan est lancé avec une limite mémoire explicite de 1 Go dans le script
-Composer `types:check`, afin de ne pas dépendre d'un cache local ni de la
-limite mémoire par défaut de PHP.
-
-## Front-end
-
-```bash
-npm ci
+composer lint:check
+composer types:check
+composer ci:check
 npm run build
 ```
 
-Le projet utilise `vite-plus` via un alias npm vers
-`@voidzero-dev/vite-plus-core`, conformément au starter kit. La version Node est
-verrouillée dans `.nvmrc` et dans la CI. Le build peut afficher un avertissement
-non bloquant concernant le paquet optionnel `fontaine` (optimisation des
-polices) ; il n'empêche pas la compilation.
+La couverture minimale de transition configurée ne remplace pas les tests métier spécifiques. Les résultats de CI doivent être vérifiés sur le commit et la branche concernés ; un run vert sur `develop` ne valide ni `master`, ni `production`, ni un déploiement.
 
-## Branches et contribution
+## Branches et livraison
 
-La stratégie cible est :
+Flux cible :
 
 ```text
 develop -> Pull Request -> master -> Pull Request -> production
 ```
 
-- Ne pas pousser directement sur `production`.
-- Ouvrir une pull request et attendre la CI verte.
-- Ne pas fusionner une pull request dont un contrôle obligatoire échoue.
-- Ne pas déployer automatiquement en production.
+- Les changements passent par Pull Request et CI verte.
+- La fusion de la PR #15 a intégré le workflow des relevés dans `develop`.
+- Cette fusion n'a pas promu le code vers `master` ou `production`.
+- La CI n'effectue aucun déploiement.
+- Aucun déploiement en production sans autorisation humaine explicite et recette de préproduction.
 
-Les branches `develop`, `master` et `production` sont protégées sur GitHub :
-pull request obligatoire, contrôle `ci` requis, force-push et suppression
-interdits. `production` applique également ces règles aux administrateurs. La
-branche `develop` est publiée et son premier run CI est vert.
+Les divergences entre branches et la promotion du Lot 2 sont suivies dans Jira, notamment PC1-52. Ne pas présumer que `develop`, `master` et `production` sont alignées.
 
-La CI ne déploie rien : elle exécute uniquement les contrôles de qualité.
-- Aucune fonctionnalité métier ne doit être ajoutée avant validation de la
-  modélisation et des décisions d'architecture.
+## Points non clôturés
 
-## Seeders
+- Terminer les critères restants des relevés (PC1-31) et la recette du workflow.
+- Vérifier le périmètre complet de correction et réouverture (PC1-33).
+- Réaliser les calculs et compteurs (Lot 6).
+- Réaliser les lots 7 à 10.
+- Finaliser les contrôles de sauvegarde, restauration et préproduction (Lot 11).
+- Résoudre les réserves de configuration et d'exploitation documentées dans la roadmap.
 
 `DatabaseSeeder` crée un utilisateur de démonstration uniquement dans les
 environnements `local` et `testing`. Il est ignoré dans les autres
@@ -204,9 +187,16 @@ production. Ne jamais exécuter de seeder de démonstration sur une base réelle
 - `APP_ENV=production`
 - `APP_DEBUG=false`
 - `APP_URL` avec le domaine HTTPS réel
-- `SESSION_DRIVER=database` pour la révocation SQL des sessions
+- `SESSION_DRIVER=database` est recommandé en production : il permet la purge
+  physique SQL des sessions en plus de l'invalidation logique.
+- Un pilote non SQL (`redis`, `file`, etc.) reste compatible avec la révocation :
+  la version de session et le `remember_token` sont renouvelés ; la purge
+  physique est alors `not_applicable` et aucune requête n'est adressée à la table
+  `sessions`. Le pilote `database` n'est donc pas une condition de sécurité de
+  l'invalidation logique.
 - `SESSION_CONNECTION=sessions` si les sessions utilisent une connexion dédiée ;
-  la révocation utilise alors cette connexion
+  la purge physique utilise alors cette connexion, sans conditionner
+  l'invalidation logique.
 - `SESSION_SECURE_COOKIE=true` (valeur par défaut en production)
 - Identifiants MySQL dédiés, jamais `root`
 - Secrets uniquement dans l'environnement de déploiement

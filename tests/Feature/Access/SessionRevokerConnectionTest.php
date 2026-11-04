@@ -1,7 +1,9 @@
 <?php
 
 use App\Enums\AuditAction;
+use App\Models\AuditEvent;
 use App\Models\User;
+use App\Services\Accounts\AuthenticationGeneration;
 use App\Services\Accounts\SessionRevoker;
 use App\Services\Audit\AuditLogger;
 use Illuminate\Database\Schema\Blueprint;
@@ -90,6 +92,11 @@ function insertSessionOn(string $connection, User $user, string $id): void
     ]);
 }
 
+function lockdownActor(): User
+{
+    return User::factory()->bureauDirection()->create();
+}
+
 it('uses the dedicated session connection for individual and global revocation', function () {
     $database = createDedicatedSessionDatabase();
 
@@ -102,24 +109,28 @@ it('uses the dedicated session connection for individual and global revocation',
         insertSessionOn('mysql', $user, 'default-individual');
         insertSessionOn('sessions', $user, 'dedicated-individual');
 
-        expect(app(SessionRevoker::class)->revoke($user))->toBe(1)
+        $individual = app(SessionRevoker::class)->revoke($user);
+
+        expect($individual->deletedSessions)->toBe(1)
+            ->and($individual->physicalCleanupState()->value)->toBe('completed')
             ->and(DB::connection('sessions')->table('sessions')->where('user_id', $user->id)->count())->toBe(0)
             ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
             ->and($user->fresh()->remember_token)->not->toBe($initialToken);
 
         insertSessionOn('sessions', $user, 'dedicated-global');
-        $tokenBeforeGlobal = $user->fresh()->remember_token;
 
-        expect(app(SessionRevoker::class)->revokeAll())->toBe(1)
+        $global = app(SessionRevoker::class)->revokeAll();
+
+        expect($global->deletedSessions)->toBe(1)
             ->and(DB::connection('sessions')->table('sessions')->count())->toBe(0)
             ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-            ->and($user->fresh()->remember_token)->not->toBe($tokenBeforeGlobal);
+            ->and($user->fresh()->remember_token)->toBeNull();
     } finally {
         dropDedicatedSessionDatabase($database);
     }
 });
 
-it('fails when the dedicated session table is absent and leaves the default table untouched', function () {
+it('keeps logical revocation when the dedicated session table is absent', function () {
     $database = createDedicatedSessionDatabase();
 
     try {
@@ -131,17 +142,28 @@ it('fails when the dedicated session table is absent and leaves the default tabl
 
         $revoker = app(SessionRevoker::class);
 
-        expect(fn () => $revoker->revoke($user))->toThrow(RuntimeException::class);
-        expect(fn () => $revoker->revokeAll())->toThrow(RuntimeException::class);
+        $individual = $revoker->revoke($user);
 
-        expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-            ->and($user->fresh()->remember_token)->toBe($initialToken);
+        expect($individual->physicalError)->not->toBeNull()
+            ->and($individual->physicalCleanupState()->value)->toBe('failed')
+            ->and($individual->deletedSessions)->toBe(0)
+            ->and($user->fresh()->remember_token)->not->toBe($initialToken)
+            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
+
+        $tokenAfterIndividual = $user->fresh()->remember_token;
+        $global = $revoker->revokeAll();
+
+        expect($global->physicalError)->not->toBeNull()
+            ->and($global->physicalCleanupState()->value)->toBe('failed')
+            ->and($user->fresh()->remember_token)->toBeNull()
+            ->and($tokenAfterIndividual)->not->toBeNull()
+            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
     } finally {
         dropDedicatedSessionDatabase($database);
     }
 });
 
-it('fails explicitly for an unknown session connection without mutation', function () {
+it('keeps logical revocation for an unknown session connection', function () {
     config(['session.connection' => 'missing_session_connection']);
 
     $user = User::factory()->bureauDirection()->create();
@@ -150,14 +172,17 @@ it('fails explicitly for an unknown session connection without mutation', functi
 
     $revoker = app(SessionRevoker::class);
 
-    expect(fn () => $revoker->revoke($user))->toThrow(RuntimeException::class);
-    expect(fn () => $revoker->revokeAll())->toThrow(RuntimeException::class);
+    $individual = $revoker->revoke($user);
+    $global = $revoker->revokeAll();
 
-    expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-        ->and($user->fresh()->remember_token)->toBe($initialToken);
+    expect($individual->physicalError)->not->toBeNull()
+        ->and($global->physicalError)->not->toBeNull()
+        ->and($user->fresh()->remember_token)->toBeNull()
+        ->and($initialToken)->not->toBeNull()
+        ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
 });
 
-it('fails explicitly when the session connection cannot be reached without mutation', function () {
+it('keeps logical revocation when the session connection cannot be reached', function () {
     $base = config('database.connections.mysql');
 
     config([
@@ -175,28 +200,22 @@ it('fails explicitly when the session connection cannot be reached without mutat
     insertSessionOn('mysql', $user, 'default-unreachable-connection');
 
     $revoker = app(SessionRevoker::class);
-    $caught = null;
 
     try {
-        $revoker->revoke($user);
-    } catch (RuntimeException $exception) {
-        $caught = $exception;
+        $individual = $revoker->revoke($user);
+        $global = $revoker->revokeAll();
     } finally {
         DB::purge('unreachable_session');
     }
 
-    expect($caught)->not->toBeNull()
-        ->and($caught->getMessage())->toContain('Impossible de vérifier')
-        ->and($caught->getMessage())->toContain('unreachable_session')
-        ->and($caught->getPrevious())->not->toBeNull();
-
-    expect(fn () => $revoker->revokeAll())->toThrow(RuntimeException::class);
-
-    expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-        ->and($user->fresh()->remember_token)->toBe($initialToken);
+    expect($individual->physicalError)->not->toBeNull()
+        ->and($global->physicalError)->not->toBeNull()
+        ->and($user->fresh()->remember_token)->toBeNull()
+        ->and($initialToken)->not->toBeNull()
+        ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
 });
 
-it('fails when the dedicated session table is incomplete', function () {
+it('keeps logical revocation when the dedicated session table is incomplete', function () {
     $database = createDedicatedSessionDatabase();
 
     try {
@@ -209,11 +228,16 @@ it('fails when the dedicated session table is incomplete', function () {
 
         $revoker = app(SessionRevoker::class);
 
-        expect(fn () => $revoker->revoke($user))->toThrow(RuntimeException::class);
-        expect(fn () => $revoker->revokeAll())->toThrow(RuntimeException::class);
+        $individual = $revoker->revoke($user);
+        $global = $revoker->revokeAll();
 
-        expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-            ->and($user->fresh()->remember_token)->toBe($initialToken);
+        expect($individual->physicalError)->not->toBeNull()
+            ->and($individual->physicalCleanupState()->value)->toBe('failed')
+            ->and($global->physicalError)->toBeNull()
+            ->and($global->deletedSessions)->toBe(0)
+            ->and($user->fresh()->remember_token)->toBeNull()
+            ->and($initialToken)->not->toBeNull()
+            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
     } finally {
         dropDedicatedSessionDatabase($database);
     }
@@ -221,6 +245,7 @@ it('fails when the dedicated session table is incomplete', function () {
 
 it('uses the dedicated session connection during emergency lockdown', function () {
     $database = createDedicatedSessionDatabase();
+    $actor = lockdownActor();
 
     try {
         createDedicatedSessionsTable();
@@ -230,7 +255,11 @@ it('uses the dedicated session connection during emergency lockdown', function (
         insertSessionOn('mysql', $user, 'default-emergency-dedicated');
         insertSessionOn('sessions', $user, 'dedicated-emergency');
 
-        $this->artisan('planning:emergency-lockdown', ['--confirm' => true])->assertExitCode(0);
+        $this->artisan('planning:emergency-lockdown', [
+            '--actor' => $actor->email,
+            '--reason' => 'Verrouillage de test après incident de sécurité.',
+            '--confirm' => true,
+        ])->assertExitCode(0);
 
         expect(DB::connection('sessions')->table('sessions')->count())->toBe(0)
             ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
@@ -243,27 +272,35 @@ it('uses the dedicated session connection during emergency lockdown', function (
     }
 });
 
-it('fails emergency lockdown for an unknown session connection without audit success', function () {
+it('records a partial lockdown when the session connection is unknown', function () {
     config(['session.connection' => 'missing_session_connection']);
 
+    $actor = lockdownActor();
     $user = User::factory()->bureauDirection()->create();
     insertSessionOn('mysql', $user, 'default-emergency-unknown');
 
-    expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+    expect(Artisan::call('planning:emergency-lockdown', [
+        '--actor' => $actor->email,
+        '--reason' => 'Verrouillage de test après incident de sécurité.',
+        '--confirm' => true,
+    ]))->toBe(1);
+
     $output = Artisan::output();
 
-    expect($output)->toContain('Opération non exécutée')
-        ->and($output)->toContain('indisponible ou inconnue');
+    expect($output)->toContain('nettoyage physique des sessions a échoué')
+        ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
 
-    expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
+    $event = AuditEvent::query()
+        ->where('action', AuditAction::EmergencyLockdown->value)
+        ->firstOrFail();
 
-    $this->assertDatabaseMissing('audit_events', [
-        'action' => AuditAction::EmergencyLockdown->value,
-    ]);
+    expect($event->changes['physical_cleanup_state'])->toBe('failed')
+        ->and($event->changes['fully_completed'])->toBeFalse();
 });
 
-it('fails emergency lockdown when the dedicated session table is absent', function () {
+it('records a partial lockdown when the dedicated session table is absent', function () {
     $database = createDedicatedSessionDatabase();
+    $actor = lockdownActor();
 
     try {
         config(['session.connection' => 'sessions', 'session.table' => 'sessions']);
@@ -271,51 +308,73 @@ it('fails emergency lockdown when the dedicated session table is absent', functi
         $user = User::factory()->bureauDirection()->create();
         insertSessionOn('mysql', $user, 'default-emergency-absent-table');
 
-        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+        expect(Artisan::call('planning:emergency-lockdown', [
+            '--actor' => $actor->email,
+            '--reason' => 'Verrouillage de test après incident de sécurité.',
+            '--confirm' => true,
+        ]))->toBe(1);
+
         $output = Artisan::output();
 
-        expect($output)->toContain('Opération non exécutée')
-            ->and($output)->toContain('absente ou incomplète');
+        expect($output)->toContain('nettoyage physique des sessions a échoué')
+            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
 
-        expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
+        $event = AuditEvent::query()
+            ->where('action', AuditAction::EmergencyLockdown->value)
+            ->firstOrFail();
 
-        $this->assertDatabaseMissing('audit_events', [
-            'action' => AuditAction::EmergencyLockdown->value,
-        ]);
+        expect($event->changes['physical_cleanup_state'])->toBe('failed');
     } finally {
         dropDedicatedSessionDatabase($database);
     }
 });
 
-it('reports a partial revocation when audit fails after dedicated session deletion', function () {
+it('reports audit unavailability after a successful dedicated revocation', function () {
     $database = createDedicatedSessionDatabase();
+    $actor = lockdownActor();
 
     try {
         createDedicatedSessionsTable();
         config(['session.connection' => 'sessions', 'session.table' => 'sessions']);
 
         $user = User::factory()->bureauDirection()->create();
-        $initialToken = $user->remember_token;
         insertSessionOn('mysql', $user, 'default-audit-partial');
         insertSessionOn('sessions', $user, 'dedicated-audit-partial');
+        insertSessionOn('sessions', $user, 'dedicated-audit-partial-2');
+
+        $real = app(AuditLogger::class);
+        $calls = 0;
 
         $audit = Mockery::mock(AuditLogger::class);
-        $audit->shouldReceive('assertConfigured')->once();
-        $audit->shouldReceive('record')->once()->andThrow(new RuntimeException('Échec d’audit simulé.'));
+        $audit->shouldReceive('record')->twice()->andReturnUsing(
+            function (...$arguments) use ($real, &$calls): AuditEvent {
+                $calls++;
+
+                if ($calls > 1) {
+                    throw new RuntimeException('Échec d’audit final simulé.');
+                }
+
+                return $real->record(...$arguments);
+            },
+        );
         app()->instance(AuditLogger::class, $audit);
 
-        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+        expect(Artisan::call('planning:emergency-lockdown', [
+            '--actor' => $actor->email,
+            '--reason' => 'Verrouillage de test après incident de sécurité.',
+            '--confirm' => true,
+        ]))->toBe(1);
+
         $output = Artisan::output();
 
-        expect($output)->toContain('Révocation partielle')
-            ->and($output)->toContain('1 session(s) supprimée(s)')
-            ->and($output)->toContain('remember tokens ont été renouvelés')
-            ->and($output)->toContain('audit n’a pas été enregistré');
-
-        expect(DB::connection('sessions')->table('sessions')->where('user_id', $user->id)->count())->toBe(0)
+        expect($output)->toContain('audit final est indisponible')
+            ->and(DB::connection('sessions')->table('sessions')->count())->toBe(0)
             ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-            ->and($user->fresh()->remember_token)->not->toBe($initialToken);
+            ->and($user->fresh()->remember_token)->toBeNull();
 
+        $this->assertDatabaseHas('audit_events', [
+            'action' => AuditAction::EmergencyLockdownRequested->value,
+        ]);
         $this->assertDatabaseMissing('audit_events', [
             'action' => AuditAction::EmergencyLockdown->value,
         ]);
@@ -324,82 +383,98 @@ it('reports a partial revocation when audit fails after dedicated session deleti
     }
 });
 
-it('does not claim deleted sessions when audit fails with zero dedicated sessions', function () {
+it('reports audit unavailability with zero dedicated sessions without inventing a count', function () {
     $database = createDedicatedSessionDatabase();
+    $actor = lockdownActor();
 
     try {
         createDedicatedSessionsTable();
         config(['session.connection' => 'sessions', 'session.table' => 'sessions']);
 
         $user = User::factory()->bureauDirection()->create();
-        $initialToken = $user->remember_token;
         insertSessionOn('mysql', $user, 'default-audit-zero');
 
+        $real = app(AuditLogger::class);
+        $calls = 0;
+
         $audit = Mockery::mock(AuditLogger::class);
-        $audit->shouldReceive('assertConfigured')->once();
-        $audit->shouldReceive('record')->once()->andThrow(new RuntimeException('Échec d’audit simulé.'));
+        $audit->shouldReceive('record')->twice()->andReturnUsing(
+            function (...$arguments) use ($real, &$calls): AuditEvent {
+                $calls++;
+
+                if ($calls > 1) {
+                    throw new RuntimeException('Échec d’audit final simulé.');
+                }
+
+                return $real->record(...$arguments);
+            },
+        );
         app()->instance(AuditLogger::class, $audit);
 
-        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+        expect(Artisan::call('planning:emergency-lockdown', [
+            '--actor' => $actor->email,
+            '--reason' => 'Verrouillage de test après incident de sécurité.',
+            '--confirm' => true,
+        ]))->toBe(1);
+
         $output = Artisan::output();
 
-        expect($output)->toContain('Révocation incomplète')
-            ->and($output)->toContain('aucune session n’a été supprimée')
-            ->and($output)->toContain('remember tokens ont été renouvelés')
-            ->and($output)->toContain('audit n’a pas été enregistré');
-
-        expect(DB::connection('sessions')->table('sessions')->count())->toBe(0)
+        expect($output)->toContain('audit final est indisponible')
+            ->and(DB::connection('sessions')->table('sessions')->count())->toBe(0)
             ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-            ->and($user->fresh()->remember_token)->not->toBe($initialToken);
-
-        $this->assertDatabaseMissing('audit_events', [
-            'action' => AuditAction::EmergencyLockdown->value,
-        ]);
+            ->and($user->fresh()->remember_token)->toBeNull();
     } finally {
         dropDedicatedSessionDatabase($database);
     }
 });
 
-it('reports the exact count when audit fails after several dedicated sessions are deleted', function () {
+it('reports the exact deleted count when the final audit is unavailable', function () {
     $database = createDedicatedSessionDatabase();
+    $actor = lockdownActor();
 
     try {
         createDedicatedSessionsTable();
         config(['session.connection' => 'sessions', 'session.table' => 'sessions']);
 
         $user = User::factory()->bureauDirection()->create();
-        $initialToken = $user->remember_token;
         insertSessionOn('mysql', $user, 'default-audit-multiple');
         insertSessionOn('sessions', $user, 'dedicated-audit-multiple-1');
         insertSessionOn('sessions', $user, 'dedicated-audit-multiple-2');
 
+        $real = app(AuditLogger::class);
+        $calls = 0;
+
         $audit = Mockery::mock(AuditLogger::class);
-        $audit->shouldReceive('assertConfigured')->once();
-        $audit->shouldReceive('record')->once()->andThrow(new RuntimeException('Échec d’audit simulé.'));
+        $audit->shouldReceive('record')->twice()->andReturnUsing(
+            function (...$arguments) use ($real, &$calls): AuditEvent {
+                $calls++;
+
+                if ($calls > 1) {
+                    throw new RuntimeException('Échec d’audit final simulé.');
+                }
+
+                return $real->record(...$arguments);
+            },
+        );
         app()->instance(AuditLogger::class, $audit);
 
-        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
-        $output = Artisan::output();
-
-        expect($output)->toContain('Révocation partielle')
-            ->and($output)->toContain('2 session(s) supprimée(s)')
-            ->and($output)->toContain('remember tokens ont été renouvelés')
-            ->and($output)->toContain('audit n’a pas été enregistré');
+        expect(Artisan::call('planning:emergency-lockdown', [
+            '--actor' => $actor->email,
+            '--reason' => 'Verrouillage de test après incident de sécurité.',
+            '--confirm' => true,
+        ]))->toBe(1);
 
         expect(DB::connection('sessions')->table('sessions')->count())->toBe(0)
             ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-            ->and($user->fresh()->remember_token)->not->toBe($initialToken);
-
-        $this->assertDatabaseMissing('audit_events', [
-            'action' => AuditAction::EmergencyLockdown->value,
-        ]);
+            ->and($user->fresh()->remember_token)->toBeNull();
     } finally {
         dropDedicatedSessionDatabase($database);
     }
 });
 
-it('reports a partial revocation when remember token rotation fails after dedicated deletion', function () {
+it('prevents physical cleanup when remember token rotation fails', function () {
     $database = createDedicatedSessionDatabase();
+    $actor = lockdownActor();
 
     try {
         createDedicatedSessionsTable();
@@ -409,24 +484,33 @@ it('reports a partial revocation when remember token rotation fails after dedica
         $initialToken = $user->remember_token;
         insertSessionOn('mysql', $user, 'default-token-partial');
         insertSessionOn('sessions', $user, 'dedicated-token-partial');
+        $generation = app(AuthenticationGeneration::class)->current();
 
-        DB::connection()->beforeExecuting(function (string $query): void {
-            if (str_contains($query, 'update `users`')) {
+        DB::beforeExecuting(function (string $query): void {
+            if (str_starts_with(strtolower($query), 'update')
+                && str_contains($query, 'users')
+                && str_contains($query, 'remember_token')) {
                 throw new RuntimeException('Échec simulé du renouvellement des remember tokens.');
             }
         });
 
-        expect(Artisan::call('planning:emergency-lockdown', ['--confirm' => true]))->toBe(1);
+        expect(Artisan::call('planning:emergency-lockdown', [
+            '--actor' => $actor->email,
+            '--reason' => 'Verrouillage de test après incident de sécurité.',
+            '--confirm' => true,
+        ]))->toBe(1);
+
         $output = Artisan::output();
 
-        expect($output)->toContain('Révocation partielle')
-            ->and($output)->toContain('1 session(s) supprimée(s)')
-            ->and($output)->toContain('remember tokens a échoué');
+        expect($output)->toContain('révocation logique des sessions a échoué')
+            ->and(app(AuthenticationGeneration::class)->current())->toBe($generation)
+            ->and($user->fresh()->remember_token)->toBe($initialToken)
+            ->and(DB::connection('sessions')->table('sessions')->where('user_id', $user->id)->count())->toBe(1)
+            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
 
-        expect(DB::connection('sessions')->table('sessions')->where('user_id', $user->id)->count())->toBe(0)
-            ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-            ->and($user->fresh()->remember_token)->toBe($initialToken);
-
+        $this->assertDatabaseHas('audit_events', [
+            'action' => AuditAction::SessionRevocationFailed->value,
+        ]);
         $this->assertDatabaseMissing('audit_events', [
             'action' => AuditAction::EmergencyLockdown->value,
         ]);

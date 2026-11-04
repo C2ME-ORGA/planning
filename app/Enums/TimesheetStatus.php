@@ -1,0 +1,110 @@
+<?php
+
+namespace App\Enums;
+
+/**
+ * États métier d'un relevé d'heures.
+ *
+ * L'enum fixe les valeurs stockées, leurs libellés, la matrice des transitions
+ * autorisées et l'éditabilité. Il n'exécute aucune transition : les services de
+ * workflow des incréments suivants restent seuls responsables de l'écriture.
+ */
+enum TimesheetStatus: string
+{
+    case Brouillon = 'brouillon';
+    case AControler = 'a_controler';
+    case ACorriger = 'a_corriger';
+    case PretePourValidation = 'prete_pour_validation';
+    case Validee = 'validee';
+
+    public function label(): string
+    {
+        return match ($this) {
+            self::Brouillon => 'Brouillon',
+            self::AControler => 'À contrôler',
+            self::ACorriger => 'À corriger',
+            self::PretePourValidation => 'Prête pour validation',
+            self::Validee => 'Validée',
+        };
+    }
+
+    /**
+     * Transitions autorisées par la matrice du Lot 5.
+     *
+     * @return array<int, self>
+     */
+    public function allowedTransitions(): array
+    {
+        return match ($this) {
+            // Le Bureau/Direction peut corriger un brouillon et le transmettre
+            // directement à la validation finale, sans transmission préalable
+            // du salarié. Le salarié reste seul autorisé à transmettre vers le
+            // contrôle (`AControler`).
+            self::Brouillon => [self::AControler, self::PretePourValidation],
+            self::AControler => [self::ACorriger, self::PretePourValidation],
+            self::ACorriger => [self::Brouillon],
+            self::PretePourValidation => [self::Validee],
+            self::Validee => [self::Brouillon],
+        };
+    }
+
+    public function canTransitionTo(self $target): bool
+    {
+        return in_array($target, $this->allowedTransitions(), true);
+    }
+
+    /**
+     * Seul un brouillon est éditable comme brouillon. Les autres états sont
+     * verrouillés pour l'édition des segments.
+     */
+    public function isEditable(): bool
+    {
+        return $this === self::Brouillon;
+    }
+
+    public function isLocked(): bool
+    {
+        return ! $this->isEditable();
+    }
+
+    /**
+     * La revue des chevauchements n'est possible qu'une fois le relevé
+     * transmis, avant la validation finale.
+     */
+    public function allowsOverlapReview(): bool
+    {
+        return in_array($this, [self::AControler, self::PretePourValidation], true);
+    }
+
+    /**
+     * Le motif est obligatoire pour les retours en correction, la préparation
+     * à la validation, la transmission directe d'un brouillon corrigé par le
+     * Bureau/Direction et la réouverture d'un relevé validé.
+     */
+    public function requiresReasonTo(self $target): bool
+    {
+        if ($this === self::AControler) {
+            return in_array($target, [self::ACorriger, self::PretePourValidation], true);
+        }
+
+        if ($this === self::Brouillon && $target === self::PretePourValidation) {
+            return true;
+        }
+
+        return $this === self::Validee && $target === self::Brouillon;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public static function options(): array
+    {
+        $options = [];
+
+        foreach (self::cases() as $status) {
+            $options[$status->value] = $status->label();
+        }
+
+        return $options;
+    }
+}

@@ -3,6 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Http\Middleware\EnsureAccountIsActive;
+use Filament\Actions\Action;
 use Filament\Auth\MultiFactor\App\AppAuthentication;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -32,6 +33,13 @@ class AdminPanelProvider extends PanelProvider
             ->login()
             ->passwordReset()
             ->profile()
+            ->userMenuItems([
+                Action::make('workspace')
+                    ->label('Espace métier')
+                    ->icon('heroicon-o-clock')
+                    ->visible(fn (): bool => auth()->user()?->isBureauDirection() ?? false)
+                    ->url(fn (): string => route('workspace.home')),
+            ])
             ->brandName('Planning C2ME')
             ->colors([
                 'primary' => Color::Amber,

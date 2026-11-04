@@ -62,7 +62,7 @@ it('creates an account without a known password and sends a single-use activatio
     $this->post('/activation/'.$token, [
         'password' => 'Str0ng-Passw0rd!',
         'password_confirmation' => 'Str0ng-Passw0rd!',
-    ])->assertRedirect('/admin/login');
+    ])->assertRedirect('/login');
 
     $user->refresh();
 
@@ -250,6 +250,7 @@ it('expires an activation link at and after 24 hours', function () {
 });
 
 it('immediately revokes sessions when an account is deactivated', function () {
+    config(['session.driver' => 'database']);
     $actor = User::factory()->bureauDirection()->create();
     $target = User::factory()->ouvrier()->create();
     $initialToken = $target->remember_token;
@@ -302,6 +303,9 @@ it('changes a role, audits it once and revokes sessions', function () {
     $target = User::factory()->ouvrier()->create();
     $initialToken = $target->remember_token;
     insertSessionFor($target, 'session-role');
+
+    // UserObserver attribue l'événement RoleChanged à l'acteur authentifié.
+    $this->actingAs($actor);
 
     app(AccountAdministration::class)->changeRole($target, Role::ChefEquipe, $actor);
 
@@ -586,6 +590,7 @@ it('rolls back the bootstrap user and lock when the audit write fails', function
 });
 
 it('resets a lost second factor through an authorized CLI action', function () {
+    config(['session.driver' => 'database']);
     $actor = User::factory()->bureauDirection()->create();
     $admin = User::factory()->admin()->withMultiFactorAuthentication()->create();
     insertSessionFor($admin, 'session-admin');
@@ -607,10 +612,15 @@ it('resets a lost second factor through an authorized CLI action', function () {
 });
 
 it('revokes all sessions during an emergency lockdown without granting access', function () {
+    config(['session.driver' => 'database']);
     $user = User::factory()->bureauDirection()->create();
     insertSessionFor($user, 'session-emergency');
 
-    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])->assertExitCode(0);
+    $this->artisan('planning:emergency-lockdown', [
+        '--actor' => $user->email,
+        '--reason' => 'Verrouillage demandé après incident de sécurité.',
+        '--confirm' => true,
+    ])->assertExitCode(0);
 
     expect(DB::table('sessions')->count())->toBe(0);
 
@@ -620,10 +630,14 @@ it('revokes all sessions during an emergency lockdown without granting access', 
 });
 
 it('refuses emergency lockdown without explicit confirmation', function () {
-    $user = User::factory()->bureauDirection()->create();
+    $actor = User::factory()->bureauDirection()->create();
+    $user = User::factory()->ouvrier()->create();
     insertSessionFor($user, 'session-no-confirm');
 
-    $this->artisan('planning:emergency-lockdown')->assertExitCode(1);
+    $this->artisan('planning:emergency-lockdown', [
+        '--actor' => $actor->email,
+        '--reason' => 'Verrouillage sans confirmation explicite.',
+    ])->assertExitCode(1);
 
     expect(DB::table('sessions')->count())->toBe(1);
 
@@ -632,13 +646,17 @@ it('refuses emergency lockdown without explicit confirmation', function () {
     ]);
 });
 
-it('refuses emergency lockdown when the audit configuration is invalid', function () {
-    $user = User::factory()->bureauDirection()->create();
+it('refuses emergency lockdown when the intent cannot be audited', function () {
+    $actor = User::factory()->bureauDirection()->create();
+    $user = User::factory()->ouvrier()->create();
     insertSessionFor($user, 'session-invalid-audit');
     config(['planning.audit.key' => 'trop-court']);
 
-    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])
-        ->expectsOutputToContain('Configuration d’audit invalide')
+    $this->artisan('planning:emergency-lockdown', [
+        '--actor' => $actor->email,
+        '--reason' => 'Verrouillage avec configuration d’audit invalide.',
+        '--confirm' => true,
+    ])->expectsOutputToContain('événement d’intention')
         ->assertExitCode(1);
 
     expect(DB::table('sessions')->count())->toBe(1);
@@ -650,6 +668,7 @@ it('refuses emergency lockdown when the audit configuration is invalid', functio
 
 it('rotates every remember token during emergency lockdown', function () {
     $users = User::factory()->count(3)->bureauDirection()->create();
+    $actor = $users->first();
     $initialTokens = $users->mapWithKeys(
         static fn (User $user): array => [$user->id => $user->remember_token],
     );
@@ -658,7 +677,11 @@ it('rotates every remember token during emergency lockdown', function () {
         insertSessionFor($user, 'session-lockdown-'.$index);
     }
 
-    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])->assertExitCode(0);
+    $this->artisan('planning:emergency-lockdown', [
+        '--actor' => $actor->email,
+        '--reason' => 'Verrouillage global planifié de toutes les sessions.',
+        '--confirm' => true,
+    ])->assertExitCode(0);
 
     expect(DB::table('sessions')->count())->toBe(0);
 
@@ -667,18 +690,20 @@ it('rotates every remember token during emergency lockdown', function () {
     }
 });
 
-it('rolls back emergency lockdown when the audit write fails', function () {
+it('does not revoke any session when the intent audit write fails', function () {
     $user = User::factory()->bureauDirection()->create();
     $initialToken = $user->remember_token;
     insertSessionFor($user, 'session-lockdown-rollback');
 
     $audit = Mockery::mock(AuditLogger::class);
-    $audit->shouldReceive('assertConfigured')->once();
     $audit->shouldReceive('record')->once()->andThrow(new RuntimeException('Échec d’audit simulé.'));
     app()->instance(AuditLogger::class, $audit);
 
-    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])
-        ->expectsOutputToContain('Révocation annulée')
+    $this->artisan('planning:emergency-lockdown', [
+        '--actor' => $user->email,
+        '--reason' => 'Verrouillage dont l’audit d’intention échoue.',
+        '--confirm' => true,
+    ])->expectsOutputToContain('événement d’intention')
         ->assertExitCode(1);
 
     expect(DB::table('sessions')->count())->toBe(1)
@@ -694,65 +719,89 @@ it('revokes individual and global sessions with the database driver', function (
     $firstToken = $first->remember_token;
     $secondToken = $second->remember_token;
 
-    expect(app(SessionRevoker::class)->revoke($first))->toBe(1)
+    $individual = app(SessionRevoker::class)->revoke($first);
+
+    expect($individual->deletedSessions)->toBe(1)
+        ->and($individual->sessionDriver)->toBe('database')
+        ->and($individual->physicalCleanupState()->value)->toBe('completed')
         ->and(DB::table('sessions')->where('user_id', $first->id)->count())->toBe(0)
         ->and($first->fresh()->remember_token)->not->toBe($firstToken)
         ->and(DB::table('sessions')->where('user_id', $second->id)->count())->toBe(1);
 
-    expect(app(SessionRevoker::class)->revokeAll())->toBe(1)
+    $global = app(SessionRevoker::class)->revokeAll();
+
+    expect($global->deletedSessions)->toBe(1)
+        ->and($global->physicalCleanupState()->value)->toBe('completed')
         ->and(DB::table('sessions')->count())->toBe(0)
         ->and($second->fresh()->remember_token)->not->toBe($secondToken);
 });
 
-it('refuses session revocation when the configured driver is not database', function (string $driver) {
+it('treats physical cleanup as not applicable for non-SQL session drivers', function (string $driver) {
     config(['session.driver' => $driver]);
 
     $user = User::factory()->bureauDirection()->create();
     $initialToken = $user->remember_token;
     insertSessionFor($user, 'unsupported-driver-'.$driver);
 
+    $queries = [];
+    DB::listen(function ($query) use (&$queries): void {
+        $queries[] = $query->sql;
+    });
+
     $revoker = app(SessionRevoker::class);
+    $individual = $revoker->revoke($user);
+    $global = $revoker->revokeAll();
 
-    expect(fn () => $revoker->revoke($user))->toThrow(RuntimeException::class);
-    expect(fn () => $revoker->revokeAll())->toThrow(RuntimeException::class);
+    // Instantané pris avant les requêtes de contrôle ci-dessous, qui lisent
+    // elles-mêmes la table `sessions`.
+    $queriesDuringRevocation = $queries;
 
-    expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-        ->and($user->fresh()->remember_token)->toBe($initialToken);
+    expect($individual->physicalCleanupRequired)->toBeFalse()
+        ->and($individual->physicalCleanupState()->value)->toBe('not_applicable')
+        ->and($global->physicalCleanupRequired)->toBeFalse()
+        ->and($global->physicalCleanupState()->value)->toBe('not_applicable')
+        ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
+        ->and($user->fresh()->remember_token)->not->toBe($initialToken)
+        ->and(collect($queriesDuringRevocation)->contains(
+            static fn (string $sql): bool => str_contains(strtolower($sql), 'sessions'),
+        ))->toBeFalse();
 })->with(['redis', 'file']);
 
-it('refuses session revocation when the session table is absent or incomplete', function (string $table) {
+it('records a failed physical cleanup when the session table is unusable', function (string $table) {
     config(['session.table' => $table]);
 
     $user = User::factory()->bureauDirection()->create();
     $initialToken = $user->remember_token;
     insertSessionFor($user, 'invalid-session-table-'.$table);
 
-    $revoker = app(SessionRevoker::class);
+    $result = app(SessionRevoker::class)->revoke($user);
 
-    expect(fn () => $revoker->revoke($user))->toThrow(RuntimeException::class);
-    expect(fn () => $revoker->revokeAll())->toThrow(RuntimeException::class);
-
-    expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1)
-        ->and($user->fresh()->remember_token)->toBe($initialToken);
+    expect($result->physicalCleanupRequired)->toBeTrue()
+        ->and($result->physicalCleanupState()->value)->toBe('failed')
+        ->and($result->physicalError)->not->toBeNull()
+        ->and($user->fresh()->remember_token)->not->toBe($initialToken)
+        ->and(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
 })->with(['missing_sessions_table', 'cache']);
 
-it('fails the emergency lockdown command when the session driver is incompatible', function (string $driver) {
+it('completes emergency lockdown without SQL cleanup for non-SQL drivers', function (string $driver) {
     config(['session.driver' => $driver]);
 
-    $user = User::factory()->bureauDirection()->create();
+    $actor = User::factory()->bureauDirection()->create();
+    $user = User::factory()->ouvrier()->create();
     insertSessionFor($user, 'emergency-incompatible-'.$driver);
 
-    $this->artisan('planning:emergency-lockdown', ['--confirm' => true])
-        ->expectsOutputToContain('SESSION_DRIVER=database')
-        ->assertExitCode(1);
+    $this->artisan('planning:emergency-lockdown', [
+        '--actor' => $actor->email,
+        '--reason' => 'Verrouillage avec un pilote de session non SQL.',
+        '--confirm' => true,
+    ])->assertExitCode(0);
 
     expect(DB::table('sessions')->where('user_id', $user->id)->count())->toBe(1);
 
-    $this->assertDatabaseMissing('audit_events', [
+    $this->assertDatabaseHas('audit_events', [
         'action' => AuditAction::EmergencyLockdown->value,
     ]);
 })->with(['redis', 'file']);
-
 it('configures a fifteen minute session and a single-use password reset token', function () {
     expect(config('session.lifetime'))->toBe(15)
         ->and(config('auth.passwords.users.expire'))->toBe(60);

@@ -32,6 +32,7 @@ use Illuminate\Support\Str;
  * @property Carbon|null $deactivated_at
  * @property string|null $deactivation_reason
  * @property Carbon|null $last_login_at
+ * @property int $session_version
  * @property string $password
  * @property string|null $remember_token
  * @property Carbon|null $created_at
@@ -59,6 +60,7 @@ class User extends Authenticatable implements FilamentUser, HasAppAuthentication
             'activated_at' => 'datetime',
             'deactivated_at' => 'datetime',
             'last_login_at' => 'datetime',
+            'session_version' => 'integer',
             'password' => 'hashed',
         ];
     }
@@ -90,11 +92,20 @@ class User extends Authenticatable implements FilamentUser, HasAppAuthentication
     /**
      * Vérifie une capacité côté serveur : compte actif, rôle, puis exception
      * temporaire non révoquée et non expirée.
+     *
+     * L'Administrateur technique est un rôle strictement borné : il ne reçoit
+     * que `AuditView`, et aucune exception de permission ne peut lui accorder
+     * un droit métier. La restriction est appliquée avant toute recherche
+     * d'exception en base.
      */
     public function hasPermission(Permission $permission): bool
     {
         if (! $this->isActive()) {
             return false;
+        }
+
+        if ($this->role === Role::Admin) {
+            return $permission === Permission::AuditView;
         }
 
         if ($this->role->hasPermission($permission)) {

@@ -1,0 +1,300 @@
+<?php
+
+namespace App\Policies;
+
+use App\Enums\Permission;
+use App\Enums\Role;
+use App\Enums\TimesheetStatus;
+use App\Models\Timesheet;
+use App\Models\User;
+use App\Services\Timesheets\TimesheetActorHistory;
+use App\Services\Timesheets\TimesheetPerimeter;
+use App\Support\TimesheetReason;
+
+/**
+ * Autorisations des relevés d'heures.
+ *
+ * La policy ne déclenche aucune transition : elle vérifie les permissions, le
+ * périmètre historique et les règles de séparation des tâches. Les services de
+ * workflow des incréments suivants restent seuls responsables de l'écriture.
+ */
+class TimesheetPolicy
+{
+    public function __construct(
+        private readonly TimesheetPerimeter $perimeter,
+        private readonly TimesheetActorHistory $history,
+    ) {}
+
+    public function viewAny(User $actor): bool
+    {
+        return $actor->hasPermission(Permission::TimesheetOwn)
+            || $actor->hasPermission(Permission::TimesheetControl)
+            || $actor->hasPermission(Permission::TimesheetValidate);
+    }
+
+    public function view(User $actor, Timesheet $timesheet): bool
+    {
+        if ($actor->hasPermission(Permission::TimesheetValidate)) {
+            return true;
+        }
+
+        if ($this->isOwner($actor, $timesheet)) {
+            return $actor->hasPermission(Permission::TimesheetOwn);
+        }
+
+        return $this->isPerimeterController($actor, $timesheet);
+    }
+
+    /**
+     * Droit général de création : réservé au Bureau/Direction.
+     *
+     * Gate ne peut pas porter de salarié cible sur cette capacité, donc elle
+     * n'autorise jamais à choisir le salarié. Toute création réelle doit être
+     * autorisée par `createFor()` sur le brouillon cible.
+     */
+    public function create(User $actor): bool
+    {
+        return $actor->hasPermission(Permission::TimesheetValidate);
+    }
+
+    /**
+     * Création d'un brouillon pour un salarié donné.
+     *
+     * Contrat : `Gate::authorize('createFor', $draft)` où `$draft` est un
+     * `Timesheet` non enregistré portant `employee_id`. Le propriétaire est
+     * autorisé par `TimesheetOwn`, le Bureau/Direction par `TimesheetValidate`.
+     */
+    public function createFor(User $actor, Timesheet $timesheet): bool
+    {
+        if ($actor->hasPermission(Permission::TimesheetValidate)) {
+            return true;
+        }
+
+        return $actor->hasPermission(Permission::TimesheetOwn)
+            && $this->isOwner($actor, $timesheet);
+    }
+
+    public function update(User $actor, Timesheet $timesheet): bool
+    {
+        if (! $timesheet->status->isEditable()) {
+            return false;
+        }
+
+        if ($actor->hasPermission(Permission::TimesheetValidate)) {
+            return true;
+        }
+
+        return $actor->hasPermission(Permission::TimesheetOwn)
+            && $this->isOwner($actor, $timesheet);
+    }
+
+    public function submit(User $actor, Timesheet $timesheet): bool
+    {
+        if (! $this->transitionAllowed($timesheet, TimesheetStatus::AControler, null)) {
+            return false;
+        }
+
+        return $actor->hasPermission(Permission::TimesheetOwn)
+            && $this->isOwner($actor, $timesheet)
+            && $timesheet->segments()->exists();
+    }
+
+    public function requestCorrection(User $actor, Timesheet $timesheet, ?string $reason = null): bool
+    {
+        if (! $this->transitionAllowed($timesheet, TimesheetStatus::ACorriger, $reason)) {
+            return false;
+        }
+
+        return $this->canControl($actor, $timesheet);
+    }
+
+    public function resumeCorrection(User $actor, Timesheet $timesheet): bool
+    {
+        if (! $this->transitionAllowed($timesheet, TimesheetStatus::Brouillon, null)) {
+            return false;
+        }
+
+        if ($actor->hasPermission(Permission::WorkflowCorrect)) {
+            return true;
+        }
+
+        return $actor->hasPermission(Permission::TimesheetOwn)
+            && $this->isOwner($actor, $timesheet);
+    }
+
+    public function markReadyForValidation(User $actor, Timesheet $timesheet, ?string $reason = null): bool
+    {
+        // Seul un relevé déjà contrôlé peut être préparé ; un brouillon relève
+        // de la transmission directe du Bureau (`sendToValidation`).
+        if ($timesheet->status !== TimesheetStatus::AControler) {
+            return false;
+        }
+
+        if (! $this->transitionAllowed($timesheet, TimesheetStatus::PretePourValidation, $reason)) {
+            return false;
+        }
+
+        return $this->canControl($actor, $timesheet);
+    }
+
+    /**
+     * Transmission directe à la validation d'un brouillon corrigé par le
+     * Bureau/Direction.
+     *
+     * Ce parcours remplace la transmission du salarié et le contrôle
+     * intermédiaire, mais reste réservé au Bureau/Direction et exige un motif.
+     * L'auteur est ensuite exclu de la validation finale d'un relevé dont il
+     * n'est pas propriétaire (voir `TimesheetActorHistory`).
+     */
+    public function sendToValidation(User $actor, Timesheet $timesheet, ?string $reason = null): bool
+    {
+        if ($timesheet->status !== TimesheetStatus::Brouillon) {
+            return false;
+        }
+
+        if (! $this->transitionAllowed($timesheet, TimesheetStatus::PretePourValidation, $reason)) {
+            return false;
+        }
+
+        return $actor->role === Role::BureauDirection
+            && $actor->hasPermission(Permission::TimesheetValidate);
+    }
+
+    public function validate(User $actor, Timesheet $timesheet, ?string $reason = null): bool
+    {
+        if (! $this->transitionAllowed($timesheet, TimesheetStatus::Validee, null)) {
+            return false;
+        }
+
+        if (! $actor->hasPermission(Permission::TimesheetValidate)) {
+            return false;
+        }
+
+        $selfValidation = $this->isOwner($actor, $timesheet);
+
+        // L'auto-validation est strictement réservée au Bureau / à la
+        // Direction : aucun autre rôle ne peut valider sa propre production,
+        // même s'il disposait un jour de `timesheet.validate`.
+        if ($selfValidation && $actor->role !== Role::BureauDirection) {
+            return false;
+        }
+
+        if ($selfValidation && ! $this->hasValidReason($reason)) {
+            return false;
+        }
+
+        // PC1-32 autorise explicitement l'auto-validation Bureau/Direction
+        // si un motif est fourni ; l'événement dédié est écrit par le service.
+        if (! $selfValidation && $this->history->isPreparedBy($actor, $timesheet)) {
+            return false;
+        }
+
+        if (! $selfValidation && $this->history->hasControlled($actor, $timesheet)) {
+            return false;
+        }
+
+        return $this->history->hasCompleteTrail($timesheet);
+    }
+
+    /**
+     * Revue d'un chevauchement : capacité dédiée, rôle Bureau/Direction et
+     * statut du relevé autorisant un examen (à contrôler ou prête pour
+     * validation).
+     */
+    public function reviewOverlap(User $actor, Timesheet $timesheet): bool
+    {
+        return $actor->role === Role::BureauDirection
+            && $actor->hasPermission(Permission::TimesheetOverlapReview)
+            && $timesheet->status->allowsOverlapReview();
+    }
+
+    /**
+     * Validation en masse : capacité globale réservée au Bureau/Direction.
+     *
+     * La policy ne porte pas de relevé cible ; chaque feuille reste ensuite
+     * validée individuellement par `TimesheetPolicy::validate()`.
+     */
+    public function validateBatch(User $actor): bool
+    {
+        return $actor->role === Role::BureauDirection
+            && $actor->hasPermission(Permission::TimesheetValidate);
+    }
+
+    /**
+     * Consultation du journal global des relevés, réservée au
+     * Bureau/Direction disposant de la capacité de validation.
+     */
+    public function viewJournal(User $actor): bool
+    {
+        return $actor->role === Role::BureauDirection
+            && $actor->hasPermission(Permission::TimesheetValidate);
+    }
+
+    public function reopen(User $actor, Timesheet $timesheet, ?string $reason = null): bool
+    {
+        if (! $this->transitionAllowed($timesheet, TimesheetStatus::Brouillon, $reason)) {
+            return false;
+        }
+
+        return $actor->hasPermission(Permission::TimesheetValidate)
+            && $actor->hasPermission(Permission::WorkflowReopen);
+    }
+
+    public function delete(User $actor, Timesheet $timesheet): bool
+    {
+        return false;
+    }
+
+    public function deleteAny(User $actor): bool
+    {
+        return false;
+    }
+
+    public function forceDelete(User $actor, Timesheet $timesheet): bool
+    {
+        return false;
+    }
+
+    public function forceDeleteAny(User $actor): bool
+    {
+        return false;
+    }
+
+    private function transitionAllowed(
+        Timesheet $timesheet,
+        TimesheetStatus $target,
+        ?string $reason,
+    ): bool {
+        if (! $timesheet->status->canTransitionTo($target)) {
+            return false;
+        }
+
+        return ! $timesheet->status->requiresReasonTo($target)
+            || $this->hasValidReason($reason);
+    }
+
+    private function canControl(User $actor, Timesheet $timesheet): bool
+    {
+        if ($actor->hasPermission(Permission::TimesheetValidate)) {
+            return true;
+        }
+
+        return $this->isPerimeterController($actor, $timesheet);
+    }
+
+    private function isPerimeterController(User $actor, Timesheet $timesheet): bool
+    {
+        return $actor->hasPermission(Permission::TimesheetControl)
+            && $this->perimeter->canControl($actor, $timesheet);
+    }
+
+    private function isOwner(User $actor, Timesheet $timesheet): bool
+    {
+        return $timesheet->employee?->user_id === $actor->getKey();
+    }
+
+    private function hasValidReason(?string $reason): bool
+    {
+        return TimesheetReason::isValidRequired($reason);
+    }
+}
