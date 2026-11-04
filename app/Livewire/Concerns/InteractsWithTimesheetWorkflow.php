@@ -2,9 +2,9 @@
 
 namespace App\Livewire\Concerns;
 
+use App\Exceptions\BusinessRuleException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Validation\ValidationException;
-use RuntimeException;
 
 /**
  * Retour utilisateur commun aux actions de workflow des relevés.
@@ -35,7 +35,7 @@ trait InteractsWithTimesheetWorkflow
             return false;
         } catch (AuthorizationException) {
             abort(403);
-        } catch (RuntimeException $exception) {
+        } catch (BusinessRuleException $exception) {
             $this->addError('workflow', $exception->getMessage());
 
             return false;

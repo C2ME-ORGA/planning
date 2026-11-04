@@ -4,6 +4,7 @@ namespace App\Services\Employees;
 
 use App\Enums\AuditAction;
 use App\Enums\Permission;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Employee;
 use App\Models\EmploymentPeriod;
 use App\Models\User;
@@ -11,7 +12,6 @@ use App\Services\Audit\AuditLogger;
 use App\Support\DatePeriod;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 /**
  * Ajout de périodes d'emploi et contrôle de couverture.
@@ -97,7 +97,7 @@ class EmploymentPeriodService
             ->first();
 
         if (! $period instanceof EmploymentPeriod) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Aucune période d’emploi ne couvre toute la période demandée. Corrigez d’abord la période d’emploi.',
             );
         }
@@ -125,7 +125,7 @@ class EmploymentPeriodService
             ->exists();
 
         if ($overlap) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Cette période d’emploi chevauche une période existante. Les dates de début et de fin sont inclusives.',
             );
         }
@@ -134,7 +134,7 @@ class EmploymentPeriodService
     private function assertCanManage(User $actor): void
     {
         if (! $actor->hasPermission(Permission::EmployeesManage)) {
-            throw new RuntimeException('Ce compte n’est pas autorisé à gérer les périodes d’emploi.');
+            throw new BusinessRuleException('Ce compte n’est pas autorisé à gérer les périodes d’emploi.');
         }
     }
 }

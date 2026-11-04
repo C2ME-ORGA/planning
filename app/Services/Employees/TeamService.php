@@ -4,11 +4,11 @@ namespace App\Services\Employees;
 
 use App\Enums\AuditAction;
 use App\Enums\Permission;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Team;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 /**
  * Équipes opérationnelles. Une équipe n'est pas supprimée : ses affectations et
@@ -26,7 +26,7 @@ class TeamService
         $name = $this->name($name);
 
         if (Team::query()->where('name', $name)->exists()) {
-            throw new RuntimeException('Une équipe porte déjà ce nom.');
+            throw new BusinessRuleException('Une équipe porte déjà ce nom.');
         }
 
         return DB::transaction(function () use ($name, $actor): Team {
@@ -58,7 +58,7 @@ class TeamService
             }
 
             if (Team::query()->where('name', $name)->whereKeyNot($team->getKey())->exists()) {
-                throw new RuntimeException('Une équipe porte déjà ce nom.');
+                throw new BusinessRuleException('Une équipe porte déjà ce nom.');
             }
 
             $previous = $team->name;
@@ -81,11 +81,11 @@ class TeamService
         $name = trim($name);
 
         if ($name === '') {
-            throw new RuntimeException('Le nom de l’équipe est obligatoire.');
+            throw new BusinessRuleException('Le nom de l’équipe est obligatoire.');
         }
 
         if (mb_strlen($name) > 120) {
-            throw new RuntimeException('Le nom de l’équipe est limité à 120 caractères.');
+            throw new BusinessRuleException('Le nom de l’équipe est limité à 120 caractères.');
         }
 
         return $name;
@@ -94,7 +94,7 @@ class TeamService
     private function assertCanManage(User $actor): void
     {
         if (! $actor->hasPermission(Permission::TeamsManage)) {
-            throw new RuntimeException('Ce compte n’est pas autorisé à gérer les équipes.');
+            throw new BusinessRuleException('Ce compte n’est pas autorisé à gérer les équipes.');
         }
     }
 }

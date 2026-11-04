@@ -2,10 +2,10 @@
 
 namespace App\Services\Employees;
 
+use App\Exceptions\BusinessRuleException;
 use App\Models\Employee;
 use Closure;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 use Throwable;
 
 /**
@@ -48,7 +48,7 @@ class EmployeeMutationLock
                 $result = DB::selectOne('SELECT GET_LOCK(?, ?) AS acquired', [$name, $timeout]);
 
                 if ($result === null || (int) $result->acquired !== 1) {
-                    throw new RuntimeException(
+                    throw new BusinessRuleException(
                         'Une autre opération est en cours sur ce salarié. Réessayez dans quelques instants.',
                     );
                 }

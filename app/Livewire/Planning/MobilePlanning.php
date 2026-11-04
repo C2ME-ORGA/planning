@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Planning;
 
+use App\Exceptions\BusinessRuleException;
 use App\Models\PlanningAssignment;
 use App\Models\User;
 use App\Services\Planning\PlanningDayBoard;
@@ -11,7 +12,6 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
-use RuntimeException;
 
 /**
  * Consultation mobile du planning d'une journée.
@@ -39,7 +39,7 @@ class MobilePlanning extends Component
     {
         try {
             DatePeriod::parse($value);
-        } catch (RuntimeException $exception) {
+        } catch (BusinessRuleException $exception) {
             $this->date = now()->toDateString();
             $this->addError('date', $exception->getMessage());
         }

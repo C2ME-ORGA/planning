@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Timesheets\Bureau;
 
+use App\Exceptions\BusinessRuleException;
 use App\Models\AuditEvent;
 use App\Models\Employee;
 use App\Models\Timesheet;
@@ -16,7 +17,6 @@ use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
-use RuntimeException;
 
 /**
  * Journal global en lecture seule des événements de relevés.
@@ -204,7 +204,7 @@ class Journal extends Component
 
         try {
             return DatePeriod::parse($value)->toDateString();
-        } catch (RuntimeException $exception) {
+        } catch (BusinessRuleException $exception) {
             $this->addError($field, $exception->getMessage());
 
             return '';

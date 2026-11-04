@@ -5,6 +5,7 @@ namespace App\Services\Employees;
 use App\Enums\AuditAction;
 use App\Enums\Permission;
 use App\Enums\Role;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Employee;
 use App\Models\Team;
 use App\Models\TeamLeadership;
@@ -15,7 +16,6 @@ use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 /**
  * Responsabilité principale d'une équipe.
@@ -104,7 +104,7 @@ class TeamLeadershipService
         $effective = DatePeriod::parse($effectiveDate);
 
         if ($effective->lt(CarbonImmutable::today())) {
-            throw new RuntimeException('La date de réaffectation ne peut pas être antérieure à aujourd’hui.');
+            throw new BusinessRuleException('La date de réaffectation ne peut pas être antérieure à aujourd’hui.');
         }
 
         return $this->teamLock->run($team, function () use ($team, $newLeader, $effective, $actor, $reason): TeamLeadership {
@@ -138,11 +138,11 @@ class TeamLeadershipService
 
                     if ($current instanceof TeamLeadership) {
                         if ($current->employee_id === $newLeader->getKey()) {
-                            throw new RuntimeException('Ce salarié est déjà le responsable principal de cette équipe.');
+                            throw new BusinessRuleException('Ce salarié est déjà le responsable principal de cette équipe.');
                         }
 
                         if ($effective->lte($current->start_date)) {
-                            throw new RuntimeException(
+                            throw new BusinessRuleException(
                                 'La date de réaffectation doit être postérieure au début de la responsabilité actuelle.',
                             );
                         }
@@ -204,15 +204,15 @@ class TeamLeadershipService
         $end = DatePeriod::parse($endDate);
 
         if ($leadership->cancelled_at !== null) {
-            throw new RuntimeException('Cette responsabilité a été annulée : elle ne peut pas être clôturée.');
+            throw new BusinessRuleException('Cette responsabilité a été annulée : elle ne peut pas être clôturée.');
         }
 
         if ($leadership->end_date !== null) {
-            throw new RuntimeException('Cette responsabilité est déjà clôturée.');
+            throw new BusinessRuleException('Cette responsabilité est déjà clôturée.');
         }
 
         if ($end->lt($leadership->start_date)) {
-            throw new RuntimeException('La date de fin ne peut pas précéder la date de début.');
+            throw new BusinessRuleException('La date de fin ne peut pas précéder la date de début.');
         }
 
         return $this->teamLock->run($leadership->team_id, function () use ($leadership, $end, $actor, $reason): TeamLeadership {
@@ -225,11 +225,11 @@ class TeamLeadershipService
                         ->firstOrFail();
 
                     if ($leadership->cancelled_at !== null) {
-                        throw new RuntimeException('Cette responsabilité a été annulée : elle ne peut pas être clôturée.');
+                        throw new BusinessRuleException('Cette responsabilité a été annulée : elle ne peut pas être clôturée.');
                     }
 
                     if ($leadership->end_date !== null) {
-                        throw new RuntimeException('Cette responsabilité est déjà clôturée.');
+                        throw new BusinessRuleException('Cette responsabilité est déjà clôturée.');
                     }
 
                     $this->periods->assertCovered(
@@ -268,11 +268,11 @@ class TeamLeadershipService
         $this->assertReason($reason);
 
         if ($leadership->cancelled_at !== null) {
-            throw new RuntimeException('Cette responsabilité est déjà annulée.');
+            throw new BusinessRuleException('Cette responsabilité est déjà annulée.');
         }
 
         if ($leadership->start_date->lte(now()->startOfDay())) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Une responsabilité déjà commencée ne peut pas être annulée. Clôturez-la avec une date de fin.',
             );
         }
@@ -287,7 +287,7 @@ class TeamLeadershipService
                         ->firstOrFail();
 
                     if ($leadership->cancelled_at !== null) {
-                        throw new RuntimeException('Cette responsabilité a déjà été annulée.');
+                        throw new BusinessRuleException('Cette responsabilité a déjà été annulée.');
                     }
 
                     $leadership->forceFill([
@@ -344,7 +344,7 @@ class TeamLeadershipService
             return;
         }
 
-        throw new RuntimeException(
+        throw new BusinessRuleException(
             'Ce compte est encore responsable principal d’une équipe ('
             .$this->summarize($responsibilities)
             .'). Réaffectez la responsabilité ou clôturez-la explicitement avant de retirer le rôle.',
@@ -365,7 +365,7 @@ class TeamLeadershipService
             return;
         }
 
-        throw new RuntimeException(
+        throw new BusinessRuleException(
             'Ce compte est encore responsable principal d’une équipe ('
             .$this->summarize($responsibilities)
             .'). Réaffectez la responsabilité ou clôturez-la explicitement avant de désactiver le compte.',
@@ -385,7 +385,7 @@ class TeamLeadershipService
         }
 
         if (! $newUser instanceof User) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Ce salarié est responsable principal d’une équipe ('
                 .$this->summarize($responsibilities)
                 .'). Réaffectez ou clôturez la responsabilité avant de délier son compte.',
@@ -448,7 +448,7 @@ class TeamLeadershipService
         $user = $employee->user;
 
         if (! $user instanceof User) {
-            throw new RuntimeException('Un responsable principal doit disposer d’un compte applicatif.');
+            throw new BusinessRuleException('Un responsable principal doit disposer d’un compte applicatif.');
         }
 
         $this->assertUserEligible($user);
@@ -457,11 +457,11 @@ class TeamLeadershipService
     private function assertUserEligible(User $user): void
     {
         if (! $user->isActive()) {
-            throw new RuntimeException('Un responsable principal doit disposer d’un compte applicatif actif.');
+            throw new BusinessRuleException('Un responsable principal doit disposer d’un compte applicatif actif.');
         }
 
         if (! in_array($user->role, [Role::ChefEquipe, Role::Conducteur], true)) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Un responsable principal doit avoir le rôle Chef d’équipe ou Conducteur de travaux.',
             );
         }
@@ -479,7 +479,7 @@ class TeamLeadershipService
             ->exists();
 
         if ($overlap) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Cette équipe possède déjà un responsable principal sur cette période. '
                 .'Clôturez ou réaffectez la responsabilité existante.',
             );
@@ -503,7 +503,7 @@ class TeamLeadershipService
             ->exists();
 
         if ($overlap) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Ce salarié est déjà responsable principal d’une équipe sur cette période. '
                 .'Un salarié ne peut être responsable principal que d’une seule équipe à la fois.',
             );
@@ -536,18 +536,18 @@ class TeamLeadershipService
         $length = mb_strlen(trim($reason));
 
         if ($length < 10) {
-            throw new RuntimeException('Un motif d’au moins 10 caractères est requis.');
+            throw new BusinessRuleException('Un motif d’au moins 10 caractères est requis.');
         }
 
         if ($length > 500) {
-            throw new RuntimeException('Le motif ne peut pas dépasser 500 caractères.');
+            throw new BusinessRuleException('Le motif ne peut pas dépasser 500 caractères.');
         }
     }
 
     private function assertCanManage(User $actor): void
     {
         if (! $actor->hasPermission(Permission::TeamsManage)) {
-            throw new RuntimeException('Ce compte n’est pas autorisé à gérer les responsabilités d’équipe.');
+            throw new BusinessRuleException('Ce compte n’est pas autorisé à gérer les responsabilités d’équipe.');
         }
     }
 }

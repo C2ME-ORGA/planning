@@ -2,9 +2,9 @@
 
 namespace App\Support;
 
+use App\Exceptions\BusinessRuleException;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
-use RuntimeException;
 
 /**
  * Analyse et comparaison strictes des dates métier (format `Y-m-d`).
@@ -25,13 +25,13 @@ final class DatePeriod
             '/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/',
             $value,
         ) !== 1) {
-            throw new RuntimeException('La date doit être au format AAAA-MM-JJ.');
+            throw new BusinessRuleException('La date doit être au format AAAA-MM-JJ.');
         }
 
         $date = CarbonImmutable::createFromFormat('!Y-m-d', substr($value, 0, 10));
 
         if (! $date instanceof CarbonImmutable || $date->format('Y-m-d') !== substr($value, 0, 10)) {
-            throw new RuntimeException('La date doit être au format AAAA-MM-JJ.');
+            throw new BusinessRuleException('La date doit être au format AAAA-MM-JJ.');
         }
 
         return $date;
@@ -49,7 +49,7 @@ final class DatePeriod
     public static function assertOrder(CarbonInterface $start, ?CarbonInterface $end): void
     {
         if ($end !== null && $end->lt($start)) {
-            throw new RuntimeException('La date de fin ne peut pas précéder la date de début.');
+            throw new BusinessRuleException('La date de fin ne peut pas précéder la date de début.');
         }
     }
 

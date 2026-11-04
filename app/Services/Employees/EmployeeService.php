@@ -4,11 +4,11 @@ namespace App\Services\Employees;
 
 use App\Enums\AuditAction;
 use App\Enums\Permission;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Employee;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 /**
  * Fiche salarié : identité minimale et lien facultatif vers un compte.
@@ -103,7 +103,7 @@ class EmployeeService
                 $employee = Employee::query()->whereKey($employee->getKey())->lockForUpdate()->firstOrFail();
 
                 if ($employee->user_id !== null) {
-                    throw new RuntimeException('Ce salarié possède déjà un compte lié. Déliez-le d’abord.');
+                    throw new BusinessRuleException('Ce salarié possède déjà un compte lié. Déliez-le d’abord.');
                 }
 
                 // Évite qu'un même compte soit lié à deux salariés par deux
@@ -111,7 +111,7 @@ class EmployeeService
                 User::query()->whereKey($user->getKey())->lockForUpdate()->firstOrFail();
 
                 if (Employee::query()->where('user_id', $user->getKey())->exists()) {
-                    throw new RuntimeException('Ce compte est déjà lié à un autre salarié.');
+                    throw new BusinessRuleException('Ce compte est déjà lié à un autre salarié.');
                 }
 
                 $this->leaderships->assertAccountChangeAllowed($employee, $user);
@@ -140,7 +140,7 @@ class EmployeeService
                 $employee = Employee::query()->whereKey($employee->getKey())->lockForUpdate()->firstOrFail();
 
                 if ($employee->user_id === null) {
-                    throw new RuntimeException('Ce salarié ne possède aucun compte lié.');
+                    throw new BusinessRuleException('Ce salarié ne possède aucun compte lié.');
                 }
 
                 $this->leaderships->assertAccountChangeAllowed($employee, null);
@@ -170,11 +170,11 @@ class EmployeeService
         $lastName = trim($lastName);
 
         if ($firstName === '' || $lastName === '') {
-            throw new RuntimeException('Le prénom et le nom sont obligatoires.');
+            throw new BusinessRuleException('Le prénom et le nom sont obligatoires.');
         }
 
         if (mb_strlen($firstName) > 100 || mb_strlen($lastName) > 100) {
-            throw new RuntimeException('Le prénom et le nom sont limités à 100 caractères.');
+            throw new BusinessRuleException('Le prénom et le nom sont limités à 100 caractères.');
         }
 
         return [$firstName, $lastName];
@@ -183,7 +183,7 @@ class EmployeeService
     private function assertCanManage(User $actor): void
     {
         if (! $actor->hasPermission(Permission::EmployeesManage)) {
-            throw new RuntimeException('Ce compte n’est pas autorisé à gérer les salariés.');
+            throw new BusinessRuleException('Ce compte n’est pas autorisé à gérer les salariés.');
         }
     }
 }

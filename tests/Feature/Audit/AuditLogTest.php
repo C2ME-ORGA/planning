@@ -10,6 +10,36 @@ use Illuminate\Auth\Events\Login;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
+function insertSignedAuditEvent(int $id, int $sequence, ?string $previousHash): string
+{
+    $hasher = app(AuditHasher::class);
+    $fields = [
+        'sequence' => $sequence,
+        'occurred_at' => now()->startOfSecond(),
+        'actor_id' => null,
+        'actor_role' => null,
+        'action' => AuditAction::AccountCreated->value,
+        'subject_type' => null,
+        'subject_id' => null,
+        'reason' => 'Événement de test.',
+        'changes' => null,
+        'context' => null,
+        'previous_hash' => $previousHash,
+        'key_id' => config('planning.audit.key_id'),
+    ];
+
+    $hash = $hasher->sign($fields);
+
+    DB::table('audit_events')->insert([
+        ...$fields,
+        'id' => $id,
+        'hash' => $hash,
+        'created_at' => now(),
+    ]);
+
+    return $hash;
+}
+
 it('writes a verifiable hash chain', function () {
     $audit = app(AuditLogger::class);
     $actor = User::factory()->bureauDirection()->create();
@@ -268,4 +298,84 @@ it('gives read-only audit access to the administrator and the Bureau', function 
     expect($admin->can('create', AuditEvent::class))->toBeFalse()
         ->and($admin->can('update', AuditEvent::query()->firstOrFail()))->toBeFalse()
         ->and($admin->can('delete', AuditEvent::query()->firstOrFail()))->toBeFalse();
+});
+
+it('verifies sequences in logical order when SQL ids are not correlated', function () {
+    $first = insertSignedAuditEvent(900, 1, null);
+    $second = insertSignedAuditEvent(5, 2, $first);
+    insertSignedAuditEvent(500, 3, $second);
+
+    $result = app(AuditLogger::class)->verify();
+
+    expect($result->isValid)->toBeTrue()
+        ->and($result->checked)->toBe(3);
+});
+
+it('detects a missing sequence', function () {
+    $first = insertSignedAuditEvent(1, 1, null);
+    insertSignedAuditEvent(2, 3, $first);
+
+    $result = app(AuditLogger::class)->verify();
+
+    expect($result->isValid)->toBeFalse()
+        ->and($result->message)->toContain('Séquence non contiguë');
+});
+
+it('detects an inconsistent previous hash', function () {
+    insertSignedAuditEvent(1, 1, null);
+    insertSignedAuditEvent(2, 2, str_repeat('a', 64));
+
+    $result = app(AuditLogger::class)->verify();
+
+    expect($result->isValid)->toBeFalse()
+        ->and($result->message)->toContain('Chaîne précédente incohérente');
+});
+
+it('accepts an empty audit log', function () {
+    $result = app(AuditLogger::class)->verify();
+
+    expect($result->isValid)->toBeTrue()
+        ->and($result->checked)->toBe(0);
+});
+
+it('verifies a large audit log across bounded batches', function () {
+    $hasher = app(AuditHasher::class);
+    $occurredAt = now()->startOfSecond();
+    $previousHash = null;
+    $rows = [];
+
+    for ($sequence = 1; $sequence <= 1200; $sequence++) {
+        $fields = [
+            'sequence' => $sequence,
+            'occurred_at' => $occurredAt,
+            'actor_id' => null,
+            'actor_role' => null,
+            'action' => AuditAction::AccountCreated->value,
+            'subject_type' => null,
+            'subject_id' => null,
+            'reason' => 'Événement de volume.',
+            'changes' => null,
+            'context' => null,
+            'previous_hash' => $previousHash,
+            'key_id' => config('planning.audit.key_id'),
+        ];
+
+        $hash = $hasher->sign($fields);
+        $rows[] = [...$fields, 'hash' => $hash, 'created_at' => $occurredAt];
+        $previousHash = $hash;
+
+        if (count($rows) === 500) {
+            DB::table('audit_events')->insert($rows);
+            $rows = [];
+        }
+    }
+
+    if ($rows !== []) {
+        DB::table('audit_events')->insert($rows);
+    }
+
+    $result = app(AuditLogger::class)->verify();
+
+    expect($result->isValid)->toBeTrue()
+        ->and($result->checked)->toBe(1200);
 });

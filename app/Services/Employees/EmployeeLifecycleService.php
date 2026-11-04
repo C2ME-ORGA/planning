@@ -4,6 +4,7 @@ namespace App\Services\Employees;
 
 use App\Enums\AuditAction;
 use App\Enums\Permission;
+use App\Exceptions\BusinessRuleException;
 use App\Exceptions\EmployeeExitBlockedException;
 use App\Models\Employee;
 use App\Models\EmploymentPeriod;
@@ -14,7 +15,6 @@ use App\Services\Audit\AuditLogger;
 use App\Support\DatePeriod;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 use Throwable;
 
 /**
@@ -49,7 +49,7 @@ class EmployeeLifecycleService
         $exit = DatePeriod::parse($exitDate);
 
         if ($deactivateAccount && $exit->gt(CarbonImmutable::today())) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'La désactivation immédiate du compte n’est possible que pour une sortie effective aujourd’hui ou dans le passé.',
             );
         }
@@ -62,11 +62,11 @@ class EmployeeLifecycleService
                     $period = $this->periods->openPeriod($employee);
 
                     if (! $period instanceof EmploymentPeriod) {
-                        throw new RuntimeException('Ce salarié ne possède aucune période d’emploi ouverte.');
+                        throw new BusinessRuleException('Ce salarié ne possède aucune période d’emploi ouverte.');
                     }
 
                     if ($exit->lt($period->start_date)) {
-                        throw new RuntimeException('La date de sortie ne peut pas précéder le début de la période d’emploi.');
+                        throw new BusinessRuleException('La date de sortie ne peut pas précéder le début de la période d’emploi.');
                     }
 
                     $blockers = $this->leaderships->exitBlockers($employee, $exitDate);
@@ -104,7 +104,7 @@ class EmployeeLifecycleService
                         ]);
 
                     if ($affected !== 1) {
-                        throw new RuntimeException(
+                        throw new BusinessRuleException(
                             'La période d’emploi a déjà été clôturée par une autre opération. Aucun changement n’est enregistré.',
                         );
                     }
@@ -176,7 +176,7 @@ class EmployeeLifecycleService
     private function assertCanManage(User $actor): void
     {
         if (! $actor->hasPermission(Permission::EmployeesManage)) {
-            throw new RuntimeException('Ce compte n’est pas autorisé à enregistrer une sortie.');
+            throw new BusinessRuleException('Ce compte n’est pas autorisé à enregistrer une sortie.');
         }
     }
 }

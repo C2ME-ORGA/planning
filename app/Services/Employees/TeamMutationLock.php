@@ -2,10 +2,10 @@
 
 namespace App\Services\Employees;
 
+use App\Exceptions\BusinessRuleException;
 use App\Models\Team;
 use Closure;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 use Throwable;
 
 /**
@@ -26,7 +26,7 @@ class TeamMutationLock
         $result = DB::selectOne('SELECT GET_LOCK(?, ?) AS acquired', [$name, $timeout]);
 
         if ($result === null || (int) $result->acquired !== 1) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Une autre opération est en cours sur cette équipe. Réessayez dans quelques instants.',
             );
         }

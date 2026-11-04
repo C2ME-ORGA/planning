@@ -9,9 +9,9 @@ return [
     | Comptes
     |--------------------------------------------------------------------------
     |
-    | Durée de validité d'un lien d'activation. Valeur par défaut à confirmer
-    | lors de la validation humaine du lot 2 (elle n'est pas fixée par la
-    | spécification).
+    | Durée de validité d'un lien d'activation, fixée à 24 heures (1 440
+    | minutes) par l'arbitrage métier du lot 2.
+    |
     |
     */
 
@@ -45,6 +45,22 @@ return [
 
     'employees' => [
         'lock_timeout_seconds' => (int) env('PLANNING_EMPLOYEE_LOCK_TIMEOUT_SECONDS', 5),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Calculs horaires
+    |--------------------------------------------------------------------------
+    |
+    | Référence mensuelle par défaut du compteur de travail effectif : 169 h,
+    | soit 10 140 minutes. Une référence individuelle peut remplacer cette
+    | valeur pour un salarié ; la résolution par date d'effet est portée par
+    | les services de calcul.
+    |
+    */
+
+    'hours' => [
+        'monthly_reference_minutes' => (int) env('PLANNING_MONTHLY_REFERENCE_MINUTES', 10140),
     ],
 
     /*

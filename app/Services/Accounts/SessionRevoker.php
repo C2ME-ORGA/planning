@@ -5,6 +5,7 @@ namespace App\Services\Accounts;
 use App\Models\User;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
@@ -77,12 +78,28 @@ class SessionRevoker
     }
 
     /**
+     * Nettoie les sessions physiques uniquement pour le pilote SQL.
+     *
+     * Les pilotes `redis`, `file`, `cookie`, `array`, etc. ne partagent pas la
+     * table `sessions` : interroger cette table produirait une fausse erreur
+     * (ou supprimerait des lignes sans rapport). Le nettoyage est alors
+     * explicitement non applicable, sans jamais remettre en cause la
+     * révocation logique déjà acquise.
+     *
      * @return array{deleted: int, driver: string, required: bool, error: ?string}
      */
     private function purgeSessions(?int $userId): array
     {
         $driver = (string) config('session.driver');
-        $required = $driver === 'database';
+
+        if ($driver !== 'database') {
+            return [
+                'deleted' => 0,
+                'driver' => $driver,
+                'required' => false,
+                'error' => null,
+            ];
+        }
 
         try {
             $query = $this->sessionTable();
@@ -94,19 +111,24 @@ class SessionRevoker
             return [
                 'deleted' => $query->delete(),
                 'driver' => $driver,
-                'required' => $required,
+                'required' => true,
                 'error' => null,
             ];
         } catch (Throwable $exception) {
-            if ($required) {
-                report($exception);
-            }
+            report($exception);
+
+            Log::warning('Nettoyage physique des sessions échoué.', [
+                'driver' => $driver,
+                'scope' => $userId === null ? 'global' : 'user',
+                'user_id' => $userId,
+                'error_class' => $exception::class,
+            ]);
 
             return [
                 'deleted' => 0,
                 'driver' => $driver,
-                'required' => $required,
-                'error' => $required ? $exception::class : null,
+                'required' => true,
+                'error' => $exception::class,
             ];
         }
     }

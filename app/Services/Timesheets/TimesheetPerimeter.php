@@ -3,6 +3,7 @@
 namespace App\Services\Timesheets;
 
 use App\Enums\Permission;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Employee;
 use App\Models\TeamLeadership;
 use App\Models\Timesheet;
@@ -10,7 +11,6 @@ use App\Models\User;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use RuntimeException;
 
 /**
  * Périmètre historique de contrôle d'un relevé.
@@ -59,7 +59,7 @@ final class TimesheetPerimeter
         $end = $timesheet->period_end;
 
         if ($start === null || $end === null) {
-            throw new RuntimeException('Un relevé doit avoir une période complète.');
+            throw new BusinessRuleException('Un relevé doit avoir une période complète.');
         }
 
         $startDate = $start->toDateString();

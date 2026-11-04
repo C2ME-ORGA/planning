@@ -3,6 +3,7 @@
 namespace App\Services\Accounts;
 
 use App\Enums\AuditAction;
+use App\Exceptions\BusinessRuleException;
 use App\Exceptions\InvalidActivationException;
 use App\Models\AccountActivation;
 use App\Models\User;
@@ -11,7 +12,6 @@ use App\Services\Audit\AuditLogger;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use RuntimeException;
 use Throwable;
 
 class AccountActivationService
@@ -34,11 +34,11 @@ class AccountActivationService
     public function send(User $user, ?User $actor = null): string
     {
         if (! $user->isActive()) {
-            throw new RuntimeException('Un compte désactivé ne peut pas recevoir de lien d’activation.');
+            throw new BusinessRuleException('Un compte désactivé ne peut pas recevoir de lien d’activation.');
         }
 
         if ($user->activated_at !== null) {
-            throw new RuntimeException('Ce compte est déjà activé : utilisez la réinitialisation de mot de passe.');
+            throw new BusinessRuleException('Ce compte est déjà activé : utilisez la réinitialisation de mot de passe.');
         }
 
         $token = Str::random(64);

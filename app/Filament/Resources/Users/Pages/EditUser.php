@@ -4,6 +4,7 @@ namespace App\Filament\Resources\Users\Pages;
 
 use App\Enums\Role;
 use App\Filament\Resources\Users\UserResource;
+use App\Filament\Support\ActionFeedback;
 use App\Models\User;
 use App\Services\Accounts\AccountAdministration;
 use Filament\Actions\ViewAction;
@@ -39,7 +40,7 @@ class EditUser extends EditRecord
                 app(AccountAdministration::class)->changeRole($record, $role, $actor);
             } catch (Throwable $exception) {
                 throw ValidationException::withMessages([
-                    'data.role' => $exception->getMessage(),
+                    'data.role' => ActionFeedback::message($exception),
                 ]);
             }
         }

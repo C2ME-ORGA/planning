@@ -1,7 +1,7 @@
 # Finalisation du Lot 5 — PC1-31 / PC1-33
 
-**Branche :** `feature/pc1-31-pc1-33-finalisation-lot-5`  
-**Base :** `develop` au commit `d04d3cf3f1e3d3f59381c0e09927b17eef4cee52`  
+**Branche :** `feature/pc1-31-pc1-33-finalisation-lot-5`
+**Base :** `develop` au commit `d04d3cf3f1e3d3f59381c0e09927b17eef4cee52`
 **Date de l'audit :** 1er novembre 2026
 
 ## Référentiel Jira confirmé

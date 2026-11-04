@@ -194,6 +194,7 @@ it('creates a rehire as a new period after an exit without reactivating the old 
 });
 
 it('deactivates the linked account only when explicitly requested during exit', function () {
+    config(['session.driver' => 'database']);
     $actor = User::factory()->bureauDirection()->create();
     $employee = Employee::factory()->create();
     EmploymentPeriod::factory()->for($employee)->create([

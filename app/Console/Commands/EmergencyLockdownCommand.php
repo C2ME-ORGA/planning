@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Console\Commands\Concerns\ResolvesCliActor;
 use App\Enums\AuditAction;
 use App\Enums\Permission;
+use App\Exceptions\UserFacingException;
 use App\Models\User;
 use App\Services\Accounts\AccountAdministration;
 use App\Services\Accounts\SessionRevocationException;
@@ -54,7 +55,12 @@ class EmergencyLockdownCommand extends Command
         try {
             $accounts->assertReason($reason);
         } catch (Throwable $exception) {
-            $this->error($exception->getMessage());
+            if ($exception instanceof UserFacingException) {
+                $this->error($exception->getMessage());
+            } else {
+                report($exception);
+                $this->error('Le motif est invalide.');
+            }
 
             return self::FAILURE;
         }

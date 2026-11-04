@@ -68,14 +68,18 @@ class AccountActions
                     ->maxLength(500),
             ])
             ->visible(fn (User $record): bool => auth()->user()?->can('reactivate', $record) ?? false)
-            ->action(function (User $record, array $data): void {
-                app(AccountAdministration::class)->reactivate(
-                    $record,
-                    $data['reason'],
-                    auth()->user(),
-                );
+            ->action(function (User $record, array $data, Action $action): void {
+                try {
+                    app(AccountAdministration::class)->reactivate(
+                        $record,
+                        $data['reason'],
+                        auth()->user(),
+                    );
 
-                Notification::make()->success()->title('Compte réactivé.')->send();
+                    Notification::make()->success()->title('Compte réactivé.')->send();
+                } catch (Throwable $exception) {
+                    ActionFeedback::failure($action, $exception);
+                }
             });
     }
 
@@ -87,13 +91,17 @@ class AccountActions
             ->requiresConfirmation()
             ->visible(fn (User $record): bool => $record->activated_at === null
                 && (auth()->user()?->can('resendActivation', $record) ?? false))
-            ->action(function (User $record): void {
-                app(AccountActivationService::class)->send($record, auth()->user());
+            ->action(function (User $record, Action $action): void {
+                try {
+                    app(AccountActivationService::class)->send($record, auth()->user());
 
-                Notification::make()
-                    ->success()
-                    ->title('Nouveau lien d’activation envoyé.')
-                    ->send();
+                    Notification::make()
+                        ->success()
+                        ->title('Nouveau lien d’activation envoyé.')
+                        ->send();
+                } catch (Throwable $exception) {
+                    ActionFeedback::failure($action, $exception);
+                }
             });
     }
 }

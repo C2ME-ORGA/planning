@@ -1,6 +1,6 @@
 # Rapprochement code, documentation et Jira
 
-**Référence :** 1er novembre 2026 — dépôt `C2ME-ORGA/planning`, branche `develop`, commit `41bdd8f87d7577e7d2f2b6bfa4525b5f519e4c94`.  
+**Référence :** 1er novembre 2026 — dépôt `C2ME-ORGA/planning`, branche `develop`, commit `41bdd8f87d7577e7d2f2b6bfa4525b5f519e4c94`.
 **PR #15 :** https://github.com/C2ME-ORGA/planning/pull/15
 
 ## Méthode et limites

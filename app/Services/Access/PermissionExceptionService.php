@@ -4,13 +4,13 @@ namespace App\Services\Access;
 
 use App\Enums\AuditAction;
 use App\Enums\Permission;
+use App\Exceptions\BusinessRuleException;
 use App\Models\PermissionException;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 /**
  * Exceptions de permission ciblées.
@@ -38,48 +38,72 @@ class PermissionExceptionService
         $this->assertReason($reason);
 
         if ($target->is($actor)) {
-            throw new RuntimeException('Une exception ne peut pas être accordée à soi-même.');
+            throw new BusinessRuleException('Une exception ne peut pas être accordée à soi-même.');
         }
 
         if (! $target->isActive()) {
-            throw new RuntimeException('Une exception ne peut pas être accordée à un compte inactif.');
+            throw new BusinessRuleException('Une exception ne peut pas être accordée à un compte inactif.');
         }
 
         if ($target->isAdministrator()) {
-            throw new RuntimeException('Un Administrateur technique ne reçoit pas de capacité métier par exception.');
+            throw new BusinessRuleException('Un Administrateur technique ne reçoit pas de capacité métier par exception.');
         }
 
         if (! $permission->isExceptionEligible()) {
-            throw new RuntimeException('Cette capacité n’est pas éligible à une exception.');
+            throw new BusinessRuleException('Cette capacité n’est pas éligible à une exception.');
         }
 
         if ($target->hasPermission($permission)) {
-            throw new RuntimeException('Ce compte dispose déjà de cette capacité.');
+            throw new BusinessRuleException('Ce compte dispose déjà de cette capacité.');
         }
 
         $maxExpiry = now()->addMonths((int) config('planning.exceptions.max_duration_months', 12));
 
         if ($expiresAt->lessThanOrEqualTo(now())) {
-            throw new RuntimeException('La date d’expiration doit être dans le futur.');
+            throw new BusinessRuleException('La date d’expiration doit être dans le futur.');
         }
 
         if ($expiresAt->greaterThan($maxExpiry)) {
-            throw new RuntimeException('La durée maximale d’une exception est de douze mois.');
-        }
-
-        $alreadyGranted = PermissionException::query()
-            ->where('user_id', $target->getKey())
-            ->where('permission', $permission->value)
-            ->active()
-            ->exists();
-
-        if ($alreadyGranted) {
-            throw new RuntimeException('Une exception active identique existe déjà.');
+            throw new BusinessRuleException('La durée maximale d’une exception est de douze mois.');
         }
 
         return DB::transaction(function () use ($target, $permission, $reason, $expiresAt, $actor): PermissionException {
+            // Le verrou sur le compte cible sérialise toutes les créations
+            // d'exception pour ce compte. La vérification de doublon est
+            // refaite après acquisition du verrou.
+            $lockedTarget = User::query()
+                ->whereKey($target->getKey())
+                ->lockForUpdate()
+                ->first();
+
+            if (! $lockedTarget instanceof User) {
+                throw new BusinessRuleException('Ce compte est introuvable.');
+            }
+
+            if (! $lockedTarget->isActive()) {
+                throw new BusinessRuleException('Une exception ne peut pas être accordée à un compte inactif.');
+            }
+
+            if ($lockedTarget->isAdministrator()) {
+                throw new BusinessRuleException('Un Administrateur technique ne reçoit pas de capacité métier par exception.');
+            }
+
+            if ($lockedTarget->hasPermission($permission)) {
+                throw new BusinessRuleException('Ce compte dispose déjà de cette capacité.');
+            }
+
+            $alreadyGranted = PermissionException::query()
+                ->where('user_id', $lockedTarget->getKey())
+                ->where('permission', $permission->value)
+                ->active()
+                ->exists();
+
+            if ($alreadyGranted) {
+                throw new BusinessRuleException('Une exception active identique existe déjà.');
+            }
+
             $exception = PermissionException::query()->create([
-                'user_id' => $target->getKey(),
+                'user_id' => $lockedTarget->getKey(),
                 'permission' => $permission->value,
                 'reason' => $reason,
                 'granted_by_id' => $actor->getKey(),
@@ -89,7 +113,7 @@ class PermissionExceptionService
 
             $this->audit->record(
                 AuditAction::PermissionExceptionGranted,
-                $target,
+                $lockedTarget,
                 [
                     'exception_id' => $exception->getKey(),
                     'permission' => $permission->value,
@@ -108,26 +132,37 @@ class PermissionExceptionService
         $this->assertCanManage($actor);
         $this->assertReason($reason);
 
-        if ($exception->revoked_at !== null) {
-            throw new RuntimeException('Cette exception est déjà révoquée.');
-        }
+        DB::transaction(function () use ($exception, $reason, $actor): void {
+            $locked = PermissionException::query()
+                ->whereKey($exception->getKey())
+                ->lockForUpdate()
+                ->first();
 
-        $exception->forceFill([
-            'revoked_at' => now(),
-            'revoked_by_id' => $actor->getKey(),
-            'revocation_reason' => $reason,
-        ])->save();
+            if (! $locked instanceof PermissionException) {
+                throw new BusinessRuleException('Cette exception est introuvable.');
+            }
 
-        $this->audit->record(
-            AuditAction::PermissionExceptionRevoked,
-            $exception->user,
-            [
-                'exception_id' => $exception->getKey(),
-                'permission' => $exception->permission->value,
-            ],
-            $reason,
-            $actor,
-        );
+            if ($locked->revoked_at !== null) {
+                throw new BusinessRuleException('Cette exception est déjà révoquée.');
+            }
+
+            $locked->forceFill([
+                'revoked_at' => now(),
+                'revoked_by_id' => $actor->getKey(),
+                'revocation_reason' => $reason,
+            ])->save();
+
+            $this->audit->record(
+                AuditAction::PermissionExceptionRevoked,
+                $locked->user,
+                [
+                    'exception_id' => $locked->getKey(),
+                    'permission' => $locked->permission->value,
+                ],
+                $reason,
+                $actor,
+            );
+        });
     }
 
     /**
@@ -144,7 +179,7 @@ class PermissionExceptionService
     private function assertCanManage(User $actor): void
     {
         if (! $actor->hasPermission(Permission::PermissionExceptionsManage)) {
-            throw new RuntimeException('Ce compte ne peut pas gérer les exceptions de permission.');
+            throw new BusinessRuleException('Ce compte ne peut pas gérer les exceptions de permission.');
         }
     }
 
@@ -153,11 +188,11 @@ class PermissionExceptionService
         $length = mb_strlen(trim($reason));
 
         if ($length < 10) {
-            throw new RuntimeException('Un motif d’au moins 10 caractères est requis.');
+            throw new BusinessRuleException('Un motif d’au moins 10 caractères est requis.');
         }
 
         if ($length > 500) {
-            throw new RuntimeException('Le motif ne peut pas dépasser 500 caractères.');
+            throw new BusinessRuleException('Le motif ne peut pas dépasser 500 caractères.');
         }
     }
 }

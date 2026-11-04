@@ -9,7 +9,7 @@ use RuntimeException;
  * actives au-delà de la date de sortie. Chaque blocage est présenté à
  * l'utilisateur pour correction manuelle explicite.
  */
-class EmployeeExitBlockedException extends RuntimeException
+class EmployeeExitBlockedException extends RuntimeException implements UserFacingException
 {
     /**
      * @param  array<int, string>  $blockers

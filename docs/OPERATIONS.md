@@ -19,12 +19,20 @@ Comportement :
 
 - refuse si un compte Bureau/Direction existe déjà ;
 - refuse si l'adresse e-mail est déjà utilisée ;
+- réserve le bootstrap de façon atomique via la clé primaire de
+  `system_locks` : deux exécutions concurrentes ne peuvent pas créer deux
+  premiers comptes. Le marqueur reste en base après succès et ferme
+  définitivement le bootstrap ;
 - crée un compte sans mot de passe utilisable (mot de passe aléatoire jamais
   communiqué) ;
 - envoie un lien d'activation à usage unique dont la durée est fixée par
-  `PLANNING_ACTIVATION_TTL_MINUTES` (1440 minutes par défaut, **valeur non
-  encore validée par le métier**) ;
-- journalise l'opération avec un acteur `null` (système).
+  `PLANNING_ACTIVATION_TTL_MINUTES` (1440 minutes, soit 24 heures, **valeur
+  validée par le métier**) ;
+- journalise l'opération avec un acteur `null` (système) ;
+- envoie la notification uniquement après le commit effectif de la transaction
+  englobante (`DB::afterCommit`). Un échec du transport e-mail après commit est
+  journalisé sans le jeton ; l'activation reste valide et l'opération n'est pas
+  annulée.
 
 Le lien doit être transmis par un canal sûr. Ne jamais le journaliser ni le
 coller dans un ticket.
@@ -70,6 +78,24 @@ Ne jamais partager les identifiants du titulaire principal ou du suppléant.
 - Nul ne peut modifier son propre rôle ni se désactiver soi-même.
 - L'Administrateur technique ne peut pas créer de compte, changer de rôle ni
   s'attribuer le rôle Bureau/Direction.
+- Les opérations sensibles sont transactionnelles et verrouillent la ligne du
+  compte concerné. Les changements de rôle et désactivations verrouillent aussi
+  l'ensemble des comptes Bureau/Direction actifs, dans un ordre stable, afin de
+  ne jamais retirer les deux derniers simultanément.
+- La révocation logique est prioritaire et transactionnelle. Le nettoyage
+  physique de la table `sessions` n'est tenté que si `SESSION_DRIVER=database`.
+  Avec `file`, `redis`, `cookie`, `array` ou un autre pilote, il est
+  explicitement non applicable et aucune requête SQL n'est émise ; la
+  désactivation et la révocation restent effectives. Le filtre serveur
+  `EnsureAccountIsActive` reste un garde-fou pour les sessions déjà ouvertes.
+- La connexion utilisée est `SESSION_CONNECTION` lorsqu’elle est définie, sinon
+  la connexion par défaut. La table ciblée est `SESSION_TABLE` (ou `sessions`).
+- Une erreur pendant le nettoyage physique est journalisée (`report()` et
+  `Log::warning`) sans annuler la révocation logique déjà acquise. Une erreur
+  pendant l'invalidation logique est propagée : aucune purge n'est tentée.
+- Avec une connexion de sessions distincte, la suppression des sessions et le
+  renouvellement des remember tokens ne peuvent pas partager une transaction
+  SQL unique : chaque opération est transactionnelle sur sa connexion.
 
 ## 3. Double authentification
 
@@ -118,6 +144,11 @@ Règles :
 - durée maximale de 12 mois, révocable à tout moment, à revoir annuellement ;
 - une exception ne contourne jamais les règles S02/S03 (non définies dans le
   dépôt à ce jour) et ne remplace pas la 2FA.
+- une création verrouille la ligne du compte bénéficiaire et revérifie le
+  doublon actif : deux créations concurrentes identiques sont sérialisées ;
+- une révocation verrouille la ligne de l'exception et revérifie son état :
+  deux révocations concurrentes ne produisent qu'une seule révocation et un
+  seul événement d'audit.
 
 ## 5. Journal d'audit
 
@@ -163,19 +194,31 @@ php artisan planning:audit:verify
 
 La commande valide d'abord la configuration de la clé (présence, longueur,
 distinction d'avec `APP_KEY`), puis renvoie un code d'échec si la séquence est
-discontinue, si un `previous_hash` ne correspond pas, si une signature est
-invalide ou si la clé d'un événement est inconnue. Elle ne répare rien : en cas
-d'échec, alerter, isoler la base et restaurer depuis une sauvegarde vérifiée.
+discontinue, dupliquée, si un `previous_hash` ne correspond pas, si une
+signature est invalide ou si la clé d'un événement est inconnue. Elle ne répare
+rien : en cas d'échec, alerter, isoler la base et restaurer depuis une
+sauvegarde vérifiée.
+
+Le parcours est paginé par `sequence`, jamais par `id` SQL, par lots de 500
+événements : les identifiants SQL peuvent ne pas suivre l'ordre logique, et le
+journal ne doit jamais être chargé intégralement en mémoire. Une vérification
+concurrente d'écritures reste possible : chaque lot voit un état cohérent, une
+écriture peut être incluse ou non, mais elle ne crée pas de fausse rupture de
+chaîne.
 
 L'Administrateur peut consulter `/admin/audit-events`, en lecture seule.
 
 **Limite connue :** une personne disposant à la fois de la clé d'audit et d'un
 accès écriture direct à la base peut recalculer la chaîne. Les triggers MySQL
-bloquent `UPDATE` et `DELETE`, mais ne protègent pas contre un acteur disposant
-de ces deux secrets. La séparation des accès, la supervision et les sauvegardes
-sont indispensables. La rotation d'`APP_KEY` invalide en revanche la
-vérification des événements historiques qui en dépendent : elle doit être
-planifiée après la disparition de ces événements ou après ré-ancrage documenté.
+bloquent `UPDATE` et `DELETE`, mais ne protègent ni contre `TRUNCATE`/`DROP
+TABLE` ni contre un acteur disposant de ces deux secrets. Une vérification sur
+un journal vide est valide : la détection d'un vidage complet exige un ancrage
+externe (sauvegarde, supervision du volume et du dernier hash). La séparation
+des accès, la supervision et les sauvegardes sont indispensables ; le compte
+applicatif ne doit disposer ni de `DROP`, ni de `ALTER`, ni de `TRIGGER`. La
+rotation d'`APP_KEY` invalide en revanche la vérification des événements
+historiques qui en dépendent : elle doit être planifiée après la disparition de
+ces événements ou après ré-ancrage documenté.
 
 ## 6. Urgence et révocation de session
 
@@ -262,8 +305,21 @@ Ne jamais exécuter `migrate:rollback` sur le batch de sécurité en production.
 - `APP_KEY` défini et sauvegardé séparément ; `PLANNING_AUDIT_KEY` distincte et
   sauvegardée séparément ; `APP_DEBUG=false` ;
   `SESSION_SECURE_COOKIE=true` en HTTPS.
+- `SESSION_DRIVER=database` : recommandé pour permettre le nettoyage physique
+  des sessions ; sans ce pilote, la révocation logique reste effective et le
+  nettoyage physique est simplement non applicable.
+- Si `SESSION_CONNECTION` est défini, vérifier que cette connexion pointe vers
+  la base contenant la table de sessions et que l’utilisateur applicatif y
+  dispose des droits de lecture et de suppression.
 - Aucun compte de test, aucune donnée réelle, aucun secret dans le dépôt.
 - Les triggers d'audit sont présents (`SHOW TRIGGERS`).
+- La table `system_locks` est migrée et le marqueur
+  `bootstrap.bureau_direction` est absent avant le premier amorçage.
+- Le transport e-mail réel est configuré et testé (`MAIL_MAILER`, hôte,
+  identifiants, `MAIL_FROM_ADDRESS`) et `APP_URL` désigne l'URL publique :
+  sans cela, les liens d'activation ne sont jamais reçus ou pointent vers le
+  mauvais domaine, et l'amorçage reste inutilisable. `MAIL_MAILER=log` ne
+  convient qu'au développement local.
 - Au moins un compte Bureau/Direction actif et un second facteur configuré.
 
 ## 8. Points non couverts par le lot 2
@@ -272,9 +328,20 @@ Ne jamais exécuter `migrate:rollback` sur le batch de sécurité en production.
   du dépôt, interprétés de façon conservatrice.
 - Politique de conservation, sauvegardes chiffrées, supervision et procédure
   de restauration : lot 11.
-- Validation métier de la durée d'activation (1440 minutes par défaut).
-- Aucun module de planning, de relevé ou d'absence n'est encore implémenté ;
-  les permissions correspondantes sont posées mais non exercées par une UI.
+- Durée d'activation validée à 24 heures (1 440 minutes).
+- État des modules métier dans l'arbre fusionné, à ne pas confondre avec une
+  validation de production :
+  - **présents dans le code et couverts par des tests** : RH et équipes (Lot 3),
+    clients et chantiers (Lot 4), planning à la demi-journée et relevés/workflow
+    (Lot 5) ;
+  - **validés fonctionnellement** : authentification, rôles, permissions et
+    audit du Lot 2 (validation acquise le 26/10/2026 sur `master`) ;
+  - **en cours ou à confirmer** : recette complète des relevés (PC1-31), recette
+    de la correction/réouverture (PC1-33), recette mobile du Lot 4 ;
+  - **restant à livrer** : calculs et compteurs (Lot 6), absences et indemnités
+    (Lot 7), clôtures et exports (Lot 8), notifications et signalements (Lot 9),
+    PWA hors ligne (Lot 10), sauvegardes et production (Lot 11).
+  Aucun de ces éléments n'est réputé déployé en production.
 
 ## 9. Points non couverts par le lot 3
 
@@ -306,7 +373,7 @@ Ne jamais exécuter `migrate:rollback` sur le batch de sécurité en production.
 - Le lot 3 attend la validation humaine avant toute suite.
 
 
-## 6. Connexion des utilisateurs terrain
+## 10. Connexion des utilisateurs terrain
 
 Les ouvriers, chefs d'équipe et conducteurs de travaux utilisent `/login`, puis sont dirigés vers le planning mobile `/planning`. Le compte doit être actif et avoir terminé son activation. La connexion au panneau d'administration reste distincte sur `/admin/login` et demeure réservée aux rôles Administrateur et Bureau / Direction avec 2FA obligatoire.
 

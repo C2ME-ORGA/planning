@@ -188,6 +188,40 @@ it('keeps individual revocation secure when the file session storage has no SQL 
     $this->assertGuest('web');
 });
 
+it('never queries the SQL session table for non-database drivers', function (string $driver) {
+    config([
+        'session.driver' => $driver,
+        'database.connections.broken_session_store' => [
+            'driver' => 'sqlite',
+            'database' => ':memory:',
+            'prefix' => '',
+            'foreign_key_constraints' => false,
+        ],
+        'session.connection' => 'broken_session_store',
+        'session.table' => 'sessions',
+    ]);
+
+    DB::purge('broken_session_store');
+
+    $user = User::factory()->conducteur()->create();
+
+    $individual = app(SessionRevoker::class)->revoke($user);
+
+    expect($individual->physicalCleanupRequired)->toBeFalse()
+        ->and($individual->physicalError)->toBeNull()
+        ->and($individual->deletedSessions)->toBe(0)
+        ->and($individual->physicalCleanupState())->toBe(SessionCleanupState::NotApplicable)
+        ->and($user->fresh()->session_version)->toBe(1);
+
+    $global = app(SessionRevoker::class)->revokeAll();
+
+    expect($global->physicalCleanupRequired)->toBeFalse()
+        ->and($global->physicalError)->toBeNull()
+        ->and($global->deletedSessions)->toBe(0)
+        ->and($global->physicalCleanupState())->toBe(SessionCleanupState::NotApplicable)
+        ->and($user->fresh()->remember_token)->toBeNull();
+})->with(['redis', 'file', 'cookie', 'array']);
+
 it('deletes sessions on the configured connection without touching the default one', function () {
     useDedicatedSessionStore();
 

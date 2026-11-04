@@ -2,11 +2,11 @@
 
 namespace App\Services\Timesheets;
 
+use App\Exceptions\BusinessRuleException;
 use App\Support\BusinessTime;
 use App\Support\DatePeriod;
 use Carbon\CarbonImmutable;
 use DateTimeZone;
-use RuntimeException;
 
 /**
  * Résolution d'une heure locale française en instant UTC non ambigu.
@@ -30,13 +30,13 @@ final class LocalDateTimeResolver
         $wallClock = CarbonImmutable::createFromFormat('!Y-m-d H:i', $date.' '.$time, 'UTC');
 
         if (! $wallClock instanceof CarbonImmutable) {
-            throw new RuntimeException('La date et l’heure locales sont invalides.');
+            throw new BusinessRuleException('La date et l’heure locales sont invalides.');
         }
 
         $matches = $this->matchingInstants($wallClock->getTimestamp(), $date, $time);
 
         if ($matches === []) {
-            throw new RuntimeException(sprintf(
+            throw new BusinessRuleException(sprintf(
                 'L’heure locale %s %s n’existe pas dans le fuseau %s (changement d’heure).',
                 $date,
                 $time,
@@ -46,7 +46,7 @@ final class LocalDateTimeResolver
 
         if (count($matches) > 1) {
             if ($offsetMinutes === null) {
-                throw new RuntimeException(sprintf(
+                throw new BusinessRuleException(sprintf(
                     'L’heure locale %s %s est ambiguë dans le fuseau %s ; précisez l’offset en minutes.',
                     $date,
                     $time,
@@ -55,7 +55,7 @@ final class LocalDateTimeResolver
             }
 
             if (! array_key_exists($offsetMinutes, $matches)) {
-                throw new RuntimeException(sprintf(
+                throw new BusinessRuleException(sprintf(
                     'L’offset %d minutes ne correspond pas à l’heure locale %s %s.',
                     $offsetMinutes,
                     $date,
@@ -69,7 +69,7 @@ final class LocalDateTimeResolver
         $instant = $matches[array_key_first($matches)];
 
         if ($offsetMinutes !== null && ! array_key_exists($offsetMinutes, $matches)) {
-            throw new RuntimeException(sprintf(
+            throw new BusinessRuleException(sprintf(
                 'L’offset %d minutes ne correspond pas à l’heure locale %s %s.',
                 $offsetMinutes,
                 $date,
@@ -83,7 +83,7 @@ final class LocalDateTimeResolver
     private function normalizeTime(string $time): string
     {
         if (preg_match('/^([01]\d|2[0-3]):[0-5]\d(?::00)?$/', $time) !== 1) {
-            throw new RuntimeException('L’heure doit être au format HH:MM, sans seconde non nulle.');
+            throw new BusinessRuleException('L’heure doit être au format HH:MM, sans seconde non nulle.');
         }
 
         return substr($time, 0, 5);

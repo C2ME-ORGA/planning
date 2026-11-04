@@ -6,6 +6,7 @@ use App\Enums\OverlapReviewDecision;
 use App\Enums\Permission;
 use App\Enums\Role;
 use App\Enums\TimeCategory;
+use App\Exceptions\BusinessRuleException;
 use App\Livewire\Concerns\InteractsWithTimesheetWorkflow;
 use App\Models\Timesheet;
 use App\Models\TimesheetSegment;
@@ -28,7 +29,6 @@ use Illuminate\Validation\Rule;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
-use RuntimeException;
 
 /**
  * Fiche détaillée d'un relevé, partagée par les trois espaces.
@@ -331,7 +331,7 @@ class TimesheetDetail extends Component
                 $this->segmentEndTime,
                 $this->offset($this->segmentEndOffsetMinutes),
             );
-        } catch (RuntimeException $exception) {
+        } catch (BusinessRuleException $exception) {
             $this->addError('segmentStartTime', $exception->getMessage());
 
             return;

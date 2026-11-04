@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Console\Commands\Concerns\ResolvesCliActor;
 use App\Enums\Permission;
 use App\Enums\Role;
+use App\Exceptions\UserFacingException;
 use App\Models\User;
 use App\Services\Accounts\AccountProvisioner;
 use Illuminate\Console\Command;
@@ -76,7 +77,12 @@ class BootstrapBureauDirectionCommand extends Command
                 $user = $accounts->bootstrapBureauDirection($name, $email);
             }
         } catch (Throwable $exception) {
-            $this->error($exception->getMessage());
+            if ($exception instanceof UserFacingException) {
+                $this->error($exception->getMessage());
+            } else {
+                report($exception);
+                $this->error('L’opération a échoué. Consultez les journaux pour le détail technique.');
+            }
 
             return self::FAILURE;
         }

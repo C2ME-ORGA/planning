@@ -2,6 +2,7 @@
 
 namespace App\Services\Timesheets;
 
+use App\Exceptions\BusinessRuleException;
 use App\Models\Employee;
 use App\Models\Timesheet;
 use App\Models\TimesheetSegment;
@@ -9,7 +10,6 @@ use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
-use RuntimeException;
 
 /**
  * Détection des chevauchements de segments d'un même salarié.
@@ -45,7 +45,7 @@ final class TimesheetOverlapDetector
             || ! $timesheet->employee instanceof Employee
             || $start === null
             || $end === null) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Le segment doit être rattaché à un salarié et à des instants complets.',
             );
         }
@@ -121,7 +121,7 @@ final class TimesheetOverlapDetector
         $endUtc = CarbonImmutable::instance($end)->utc();
 
         if ($endUtc->lessThanOrEqualTo($startUtc)) {
-            throw new RuntimeException('La fin d’un segment doit être strictement postérieure à son début.');
+            throw new BusinessRuleException('La fin d’un segment doit être strictement postérieure à son début.');
         }
 
         return TimesheetSegment::query()

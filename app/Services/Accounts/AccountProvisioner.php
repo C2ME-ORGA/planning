@@ -5,13 +5,13 @@ namespace App\Services\Accounts;
 use App\Enums\AuditAction;
 use App\Enums\Permission;
 use App\Enums\Role;
+use App\Exceptions\BusinessRuleException;
 use App\Exceptions\InvalidActivationException;
 use App\Models\AccountActivation;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use RuntimeException;
 
 /**
  * Création de compte et activation par lien unique.
@@ -34,13 +34,13 @@ class AccountProvisioner
     {
         if ($actor !== null && (! $actor->hasPermission(Permission::AccountsCreate)
             || ! $actor->hasPermission(Permission::RolesAssign))) {
-            throw new RuntimeException('Ce compte n’est pas autorisé à créer un compte.');
+            throw new BusinessRuleException('Ce compte n’est pas autorisé à créer un compte.');
         }
 
         $email = Str::lower(trim($email));
 
         if (User::query()->where('email', $email)->exists()) {
-            throw new RuntimeException('Une adresse e-mail identique existe déjà.');
+            throw new BusinessRuleException('Une adresse e-mail identique existe déjà.');
         }
 
         return DB::transaction(function () use ($name, $email, $role, $actor): User {
@@ -89,13 +89,13 @@ class AccountProvisioner
             ]);
 
             if ($locked === 0) {
-                throw new RuntimeException('Un compte Bureau / Direction existe déjà : le bootstrap est clos.');
+                throw new BusinessRuleException('Un compte Bureau / Direction existe déjà : le bootstrap est clos.');
             }
 
             // Contrôle après acquisition du verrou : une transaction
             // concurrente a pu créer le compte pendant l'attente.
             if (User::query()->bureauDirection()->exists()) {
-                throw new RuntimeException('Un compte Bureau / Direction existe déjà : le bootstrap est clos.');
+                throw new BusinessRuleException('Un compte Bureau / Direction existe déjà : le bootstrap est clos.');
             }
 
             $user = $this->create($name, $email, Role::BureauDirection);

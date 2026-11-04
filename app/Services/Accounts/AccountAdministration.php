@@ -5,6 +5,7 @@ namespace App\Services\Accounts;
 use App\Enums\AuditAction;
 use App\Enums\Permission;
 use App\Enums\Role;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Employee;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
@@ -12,7 +13,6 @@ use App\Services\Employees\EmployeeMutationLock;
 use App\Services\Employees\TeamLeadershipService;
 use Closure;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 use Throwable;
 
 class AccountAdministration
@@ -37,7 +37,7 @@ class AccountAdministration
                     $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
 
                     if (! $target->isActive()) {
-                        throw new RuntimeException('Ce compte est déjà désactivé.');
+                        throw new BusinessRuleException('Ce compte est déjà désactivé.');
                     }
 
                     $this->assertNotLastBureauDirection($target);
@@ -80,7 +80,7 @@ class AccountAdministration
                 $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
 
                 if (! $target->isActive()) {
-                    throw new RuntimeException('Ce compte est déjà désactivé.');
+                    throw new BusinessRuleException('Ce compte est déjà désactivé.');
                 }
 
                 $this->assertNotLastBureauDirection($target);
@@ -110,7 +110,7 @@ class AccountAdministration
                     $target = User::query()->whereKey($target->getKey())->lockForUpdate()->firstOrFail();
 
                     if ($target->isActive()) {
-                        throw new RuntimeException('Ce compte est déjà actif.');
+                        throw new BusinessRuleException('Ce compte est déjà actif.');
                     }
 
                     $target->forceFill([
@@ -204,7 +204,7 @@ class AccountAdministration
                 $target->forceFill([
                     'app_authentication_secret' => null,
                     'app_authentication_recovery_codes' => null,
-                ])->save();
+                ])->saveQuietly();
 
                 $result = $this->sessions->revoke($target);
 
@@ -229,20 +229,25 @@ class AccountAdministration
         $this->assertReason($reason);
 
         try {
-            $result = $this->sessions->revoke($target);
+            // La révocation logique et l'audit doivent partager la même
+            // transaction : un échec d'audit annule la rotation du jeton et
+            // l'incrément de version.
+            DB::transaction(function () use ($target, $reason, $actor): void {
+                $result = $this->sessions->revoke($target);
+
+                $this->audit->record(
+                    AuditAction::SessionsRevoked,
+                    $target,
+                    $this->sessionAuditChanges($result),
+                    $reason,
+                    $actor,
+                );
+            });
         } catch (SessionRevocationException $exception) {
             $this->recordRevocationFailure($exception, $target, $reason, $actor);
 
             throw $exception;
         }
-
-        $this->audit->record(
-            AuditAction::SessionsRevoked,
-            $target,
-            $this->sessionAuditChanges($result),
-            $reason,
-            $actor,
-        );
     }
 
     /**
@@ -262,7 +267,7 @@ class AccountAdministration
             ->exists();
 
         if (! $others) {
-            throw new RuntimeException('Le dernier compte Bureau / Direction actif ne peut pas être retiré.');
+            throw new BusinessRuleException('Le dernier compte Bureau / Direction actif ne peut pas être retiré.');
         }
     }
 
@@ -271,11 +276,11 @@ class AccountAdministration
         $length = mb_strlen(trim($reason));
 
         if ($length < 10) {
-            throw new RuntimeException('Un motif d’au moins 10 caractères est requis.');
+            throw new BusinessRuleException('Un motif d’au moins 10 caractères est requis.');
         }
 
         if ($length > 500) {
-            throw new RuntimeException('Le motif ne peut pas dépasser 500 caractères.');
+            throw new BusinessRuleException('Le motif ne peut pas dépasser 500 caractères.');
         }
     }
 
@@ -359,7 +364,7 @@ class AccountAdministration
     private function assertNotSelf(User $target, User $actor, string $message): void
     {
         if ($target->is($actor)) {
-            throw new RuntimeException($message);
+            throw new BusinessRuleException($message);
         }
     }
 
@@ -370,7 +375,7 @@ class AccountAdministration
     private function assertCan(User $actor, Permission $permission): void
     {
         if (! $actor->hasPermission($permission)) {
-            throw new RuntimeException('Ce compte n’est pas autorisé à effectuer cette opération.');
+            throw new BusinessRuleException('Ce compte n’est pas autorisé à effectuer cette opération.');
         }
     }
 }

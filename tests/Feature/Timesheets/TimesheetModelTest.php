@@ -8,7 +8,6 @@ use App\Models\TimesheetSegment;
 use App\Services\Timesheets\LocalDateTimeResolver;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
-use LogicException;
 
 it('computes the Monday to Sunday week containing a date', function (): void {
     $week = Timesheet::weekFor('2026-11-04');

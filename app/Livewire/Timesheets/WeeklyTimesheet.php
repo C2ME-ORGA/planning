@@ -3,6 +3,7 @@
 namespace App\Livewire\Timesheets;
 
 use App\Enums\TimeCategory;
+use App\Exceptions\BusinessRuleException;
 use App\Livewire\Concerns\InteractsWithTimesheetWorkflow;
 use App\Models\Employee;
 use App\Models\Timesheet;
@@ -26,7 +27,6 @@ use Illuminate\Validation\Rule;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
-use RuntimeException;
 
 /**
  * Planning hebdomadaire et saisie des segments d'un salarié.
@@ -66,7 +66,7 @@ class WeeklyTimesheet extends Component
             $period = Timesheet::weekFor($week === null || trim($week) === ''
                 ? CarbonImmutable::now()
                 : $week);
-        } catch (RuntimeException) {
+        } catch (BusinessRuleException) {
             abort(404);
         }
 
@@ -198,7 +198,7 @@ class WeeklyTimesheet extends Component
                 $this->endTime,
                 $this->offset($this->endOffsetMinutes),
             );
-        } catch (RuntimeException $exception) {
+        } catch (BusinessRuleException $exception) {
             $this->addError('startTime', $exception->getMessage());
 
             return;
@@ -395,7 +395,7 @@ class WeeklyTimesheet extends Component
     {
         try {
             $parsed = DatePeriod::parse($date);
-        } catch (RuntimeException) {
+        } catch (BusinessRuleException) {
             return false;
         }
 

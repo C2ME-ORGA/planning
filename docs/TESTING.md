@@ -57,8 +57,73 @@ Les triggers MySQL d’audit ne sont pas supprimés dans les tests (le DDL MySQL
 valide implicitement les transactions). La détection de falsification est donc
 testée en insérant directement un événement dont la signature est invalide.
 
-Résultats de référence du lot 2 : 45 tests, 304 assertions, Pint et Larastan
-verts.
+## Durcissement concurrence et atomicité (PC1-52)
+
+- `tests/Feature/Audit/AuditLogTest.php` couvre la pagination par `sequence`
+  avec des identifiants SQL non corrélés, les séquences manquantes, les ruptures
+  de `previous_hash`, le journal vide et un volume de 1 200 événements parcouru
+  par lots bornés.
+- `tests/Feature/Access/AccountLifecycleTest.php` couvre le marqueur durable
+  `system_locks` du bootstrap, l’unicité de ce verrou, le rollback du compte et
+  du verrou en cas d’échec d’audit, la réactivation, le changement de rôle sans
+  doublon d’audit, la révocation de sessions, la réinitialisation MFA et les
+  rollbacks d’audit.
+- Les notifications d’activation sont testées après commit uniquement, avec
+  absence d’envoi sur rollback de la transaction d’activation ou d’une
+  transaction englobante, envoi unique, et échec de transport après commit
+  conservant l’activation et journalisant sans jeton.
+- La révocation est testée avec `SESSION_DRIVER=database` pour un compte et
+  globalement : suppression des lignes `sessions`, rotation du `remember_token`
+  et incrément de `users.session_version`.
+- L’invalidation logique est testée indépendamment du pilote : avec `redis`,
+  `file`, `cookie` ou `array`, le `remember_token` et `session_version` sont
+  renouvelés, le nettoyage physique vaut `not_applicable` et aucune requête SQL
+  n’est émise sur la table `sessions`.
+- Avec le pilote `database`, une table `sessions` absente ou incomplète produit
+  un résultat `failed` (`physical_cleanup_state`) sans annuler la révocation
+  logique : l’ancienne session reste inutilisable, l’échec est journalisé et la
+  commande d’urgence retourne un code d’échec.
+- La commande d’urgence distingue trois cas : échec logique (aucune révocation,
+  code retour en échec), échec physique (révocation logique effective, code
+  retour en échec, audit `fully_completed = false`) et nettoyage non applicable
+  (révocation logique effective, code retour de succès).
+- `tests/Feature/Access/RolePermissionMatrixTest.php` couvre le refus d’une
+  seconde exception active, la double révocation, et le rollback de création ou
+  de révocation lorsque l’audit échoue.
+- Le verrouillage est testé sur MySQL via `lockForUpdate()`, la clé primaire de
+  `system_locks` et des transactions réelles. La suite ne crée pas de processus
+  concurrents (pas de `pcntl` sous Windows) : la garantie multi-processus repose
+  sur les contraintes et verrous SQL documentés, pas sur un test de fork.
+- Les tests de révocation configurent `SESSION_DRIVER=database` pour vérifier la
+  purge physique et les remember tokens. Les scénarios non SQL vérifient que la
+  révocation logique reste effective, que le nettoyage est `not_applicable` et
+  qu’aucune requête n’est adressée à la table `sessions`.
+- Les callbacks `afterCommit` sont exécutés par le gestionnaire de transactions
+  de test de Laravel au commit de la transaction englobante simulée ; un test
+  dédié vérifie le report et l’annulation par rollback.
+- `tests/Feature/Access/SessionRevokerConnectionTest.php` crée une seconde base
+  MySQL et une connexion Laravel `sessions` pour vérifier réellement
+  `SESSION_CONNECTION` : révocation individuelle/globale sur la bonne base,
+  table par défaut intacte, table absente/incomplète, connexion inconnue,
+  connexion réellement inaccessible et commande d’urgence. Ces tests nécessitent
+  le droit MySQL `CREATE DATABASE` et suppriment la base dédiée en fin de test.
+  En CI, le compte MySQL doit disposer de ce droit ; sinon le scénario multi-base
+  ne peut pas être exécuté.
+- La suite complète s’exécute sur MySQL. Aucun test de révocation n’est
+  exécuté sur SQLite.
+
+Résultats de référence du lot 2 avant la correction ciblée du retour Emergency
+Lockdown : 95 tests, 482 assertions, Pint et Larastan verts.
+
+La correction ciblée ajoute des tests dans
+`tests/Feature/Access/SessionRevokerConnectionTest.php` : échec d’audit après
+suppression d’une session dédiée, échec d’audit avec zéro session dédiée,
+échec d’audit après suppression de plusieurs sessions avec vérification du
+nombre exact, et échec du renouvellement des remember tokens après suppression
+dédiée. Conformément à la consigne de validation proportionnée, la suite
+complète n’a pas été relancée pour ce changement circonscrit à
+`EmergencyLockdownCommand` et `SessionRevoker::revokeAll()` ; les tests ciblés de
+ce fichier et de `AccountLifecycleTest` couvrent les scénarios concernés.
 
 Résultats PC1-12 (02/11/2026) : 634 tests pertinents exécutés (633 réussis,
 1 ignoré, 3384 assertions), Pint et PHPStan verts sur le périmètre modifié.
@@ -641,3 +706,58 @@ Ne pas lancer `planning:emergency-lockdown` en production pour tester la supplé
 - Date de clôture et visa du contrôleur :
 
 Ne jamais inscrire de mot de passe, secret MFA, code de récupération ou lien d'activation.
+
+## Couverture PC1-34 — calculs horaires et agrégats mensuels
+
+- `tests/Unit/Hours/IntervalMergerTest.php` : intervalles disjoints, adjacents,
+  chevauchements partiels, complets et identiques, chaîne de chevauchements,
+  ordre non trié, chevauchement pendant un changement d'heure, identification
+  des segments en anomalie.
+- `tests/Unit/Hours/CategoryIntervalsTest.php` : travail effectif seul, exclusion
+  de chaque catégorie non effective, fusion des chevauchements, fusion
+  indépendante par catégorie, passage de minuit, découpe sur une fenêtre
+  mensuelle, résultat vide.
+- `tests/Unit/Hours/WeeklyHoursCalculatorTest.php` : 38 h 59, 39 h exactement,
+  39 h 01, 40 h, 42 h, précision à la minute, exclusion du trajet, fusion avant
+  seuil, changement d'heure de mars et d'octobre, semaine à cheval sur deux
+  mois, frontière dimanche/lundi, absence de report du déficit.
+- `tests/Unit/Hours/EmploymentPresenceTest.php` : mois de 28, 29, 30 et 31
+  jours, entrée et sortie inclusives, union de plusieurs périodes, absence de
+  période.
+- `tests/Unit/Hours/ProratedReferenceTest.php` : référence standard, entrée et
+  sortie en cours de mois, proratisation fractionnaire, arrondis aux limites de
+  7 et 8 minutes, seuil de 7 min 30 s, absence d'arrondi d'un mois complet et
+  d'une durée travaillée.
+- `tests/Unit/Hours/MonthlyReferenceResolverTest.php` : référence par défaut,
+  référence individuelle, effet au mois suivant, remplacement d'une modification
+  future, absence d'effet rétroactif, résolution par salarié.
+- `tests/Feature/Hours/ValidatedTimesheetSelectorTest.php` : inclusion du seul
+  statut validé, exclusion des quatre autres statuts, exclusion immédiate après
+  réouverture, réintégration après revalidation, périmètre de l'acteur, segments
+  limités à la fenêtre demandée.
+- `tests/Feature/Hours/MonthlyHoursAggregatorTest.php` : agrégat mensuel,
+  déduplication des chevauchements, suivi séparé des catégories, ventilation
+  d'une semaine à cheval sur deux mois, proratisation à l'entrée et à la sortie,
+  absence de référence sans période d'emploi, mois de 28 à 31 jours, référence
+  individuelle.
+- `tests/Feature/Hours/OfficialHoursCalculatorTest.php` : composition des
+  relevés validés, calcul hebdomadaire et mensuel, exclusion après réouverture,
+  réintégration après revalidation, absence d'écriture de segments ou d'audit.
+
+Commandes exécutées localement :
+
+```powershell
+php artisan test tests/Unit/Hours tests/Feature/Hours
+./vendor/bin/pint --test
+./vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+```
+
+Résultats observés : **78 tests réussis, 224 assertions**, Pint vert, Larastan
+niveau 7 sans erreur. La suite complète n'a pas été relancée pour ce lot
+conformément à la consigne de concentrer les vérifications sur les services
+construits ; elle reste à exécuter avant une PR.
+
+Limite explicite : PC1-34 ne crée aucun stockage persistant de référence
+individuelle. Le contrat `MonthlyReferenceProvider` et la résolution par date
+d'effet sont livrés, mais l'historisation en base et l'audit des changements de
+référence restent à implémenter après validation du schéma.

@@ -2,11 +2,11 @@
 
 namespace App\Services\Timesheets;
 
+use App\Exceptions\BusinessRuleException;
 use App\Support\BusinessTime;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use LogicException;
-use RuntimeException;
 
 /**
  * Calculs de durée d'un segment de relevé.
@@ -54,11 +54,11 @@ final class WorkedTimeCalculator
         $seconds = $endUtc->getTimestamp() - $startUtc->getTimestamp();
 
         if ($seconds <= 0) {
-            throw new RuntimeException('La fin d’un segment doit être strictement postérieure à son début.');
+            throw new BusinessRuleException('La fin d’un segment doit être strictement postérieure à son début.');
         }
 
         if ($seconds % 60 !== 0) {
-            throw new RuntimeException('La durée d’un segment doit être exprimée en minutes entières.');
+            throw new BusinessRuleException('La durée d’un segment doit être exprimée en minutes entières.');
         }
 
         return intdiv($seconds, 60);
@@ -80,7 +80,7 @@ final class WorkedTimeCalculator
         $this->assertMinutePrecision($startLocal, $endLocal);
 
         if ($endLocal->lessThanOrEqualTo($startLocal)) {
-            throw new RuntimeException('La fin d’un segment doit être strictement postérieure à son début.');
+            throw new BusinessRuleException('La fin d’un segment doit être strictement postérieure à son début.');
         }
 
         $cursor = $startLocal->startOfDay();
@@ -126,7 +126,7 @@ final class WorkedTimeCalculator
     {
         if ($start->second !== 0 || $end->second !== 0
             || $start->micro !== 0 || $end->micro !== 0) {
-            throw new RuntimeException('Un segment est saisi à la minute, sans seconde ni fraction.');
+            throw new BusinessRuleException('Un segment est saisi à la minute, sans seconde ni fraction.');
         }
     }
 }

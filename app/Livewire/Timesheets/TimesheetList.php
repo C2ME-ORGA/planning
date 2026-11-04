@@ -4,6 +4,7 @@ namespace App\Livewire\Timesheets;
 
 use App\Enums\Permission;
 use App\Enums\TimesheetStatus;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Timesheet;
 use App\Models\User;
 use App\Services\Timesheets\TimesheetOverlapOverview;
@@ -17,7 +18,6 @@ use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use Livewire\WithPagination;
-use RuntimeException;
 
 /**
  * Liste filtrable des relevés accessibles à l'acteur.
@@ -244,7 +244,7 @@ class TimesheetList extends Component
 
         try {
             return DatePeriod::parse($value)->toDateString();
-        } catch (RuntimeException $exception) {
+        } catch (BusinessRuleException $exception) {
             $this->addError($field, $exception->getMessage());
 
             return '';
@@ -257,7 +257,7 @@ class TimesheetList extends Component
             DatePeriod::parse($value);
 
             return true;
-        } catch (RuntimeException) {
+        } catch (BusinessRuleException) {
             return false;
         }
     }

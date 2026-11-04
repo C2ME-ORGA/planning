@@ -5,6 +5,7 @@ namespace App\Services\Employees;
 use App\Enums\AuditAction;
 use App\Enums\Permission;
 use App\Enums\TeamAssignmentKind;
+use App\Exceptions\BusinessRuleException;
 use App\Models\Employee;
 use App\Models\Team;
 use App\Models\TeamAssignment;
@@ -13,7 +14,6 @@ use App\Services\Audit\AuditLogger;
 use App\Support\DatePeriod;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
-use RuntimeException;
 
 /**
  * Affectations principales et temporaires historisées.
@@ -85,15 +85,15 @@ class TeamAssignmentService
         $end = DatePeriod::parse($endDate);
 
         if ($assignment->cancelled_at !== null) {
-            throw new RuntimeException('Cette affectation a été annulée : elle ne peut pas être clôturée.');
+            throw new BusinessRuleException('Cette affectation a été annulée : elle ne peut pas être clôturée.');
         }
 
         if ($assignment->end_date !== null) {
-            throw new RuntimeException('Cette affectation est déjà clôturée.');
+            throw new BusinessRuleException('Cette affectation est déjà clôturée.');
         }
 
         if ($end->lt($assignment->start_date)) {
-            throw new RuntimeException('La date de fin ne peut pas précéder la date de début.');
+            throw new BusinessRuleException('La date de fin ne peut pas précéder la date de début.');
         }
 
         return $this->lock->run($assignment->employee_id, function () use ($assignment, $end, $actor): TeamAssignment {
@@ -105,11 +105,11 @@ class TeamAssignmentService
                     ->firstOrFail();
 
                 if ($assignment->cancelled_at !== null) {
-                    throw new RuntimeException('Cette affectation a été annulée : elle ne peut pas être clôturée.');
+                    throw new BusinessRuleException('Cette affectation a été annulée : elle ne peut pas être clôturée.');
                 }
 
                 if ($assignment->end_date !== null) {
-                    throw new RuntimeException('Cette affectation est déjà clôturée.');
+                    throw new BusinessRuleException('Cette affectation est déjà clôturée.');
                 }
 
                 $employee = $assignment->employee;
@@ -148,11 +148,11 @@ class TeamAssignmentService
         $this->assertReason($reason);
 
         if ($assignment->cancelled_at !== null) {
-            throw new RuntimeException('Cette affectation est déjà annulée.');
+            throw new BusinessRuleException('Cette affectation est déjà annulée.');
         }
 
         if ($assignment->start_date->lte(now()->startOfDay())) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 'Une affectation déjà commencée ne peut pas être annulée. Clôturez-la avec une date de fin.',
             );
         }
@@ -166,7 +166,7 @@ class TeamAssignmentService
                     ->firstOrFail();
 
                 if ($assignment->cancelled_at !== null) {
-                    throw new RuntimeException('Cette affectation a déjà été annulée.');
+                    throw new BusinessRuleException('Cette affectation a déjà été annulée.');
                 }
 
                 $assignment->forceFill([
@@ -208,7 +208,7 @@ class TeamAssignmentService
             ->exists();
 
         if ($overlap) {
-            throw new RuntimeException(
+            throw new BusinessRuleException(
                 $kind === TeamAssignmentKind::Primary
                     ? 'Ce salarié possède déjà une équipe principale sur cette période.'
                     : 'Ce salarié possède déjà une affectation temporaire sur cette période.',
@@ -221,18 +221,18 @@ class TeamAssignmentService
         $length = mb_strlen(trim($reason));
 
         if ($length < 10) {
-            throw new RuntimeException('Un motif d’au moins 10 caractères est requis.');
+            throw new BusinessRuleException('Un motif d’au moins 10 caractères est requis.');
         }
 
         if ($length > 500) {
-            throw new RuntimeException('Le motif ne peut pas dépasser 500 caractères.');
+            throw new BusinessRuleException('Le motif ne peut pas dépasser 500 caractères.');
         }
     }
 
     private function assertCanManage(User $actor): void
     {
         if (! $actor->hasPermission(Permission::TeamsManage)) {
-            throw new RuntimeException('Ce compte n’est pas autorisé à gérer les affectations d’équipe.');
+            throw new BusinessRuleException('Ce compte n’est pas autorisé à gérer les affectations d’équipe.');
         }
     }
 }

@@ -35,11 +35,23 @@ class AuditLogger
 
     private const MAX_DEPTH = 6;
 
+    private const VERIFY_BATCH_SIZE = 500;
+
     private const REDACTED = '[masqué]';
 
     public function __construct(
         private readonly AuditHasher $hasher,
     ) {}
+
+    /**
+     * Vérifie la configuration de signature avant une opération sensible.
+     *
+     * @throws \RuntimeException
+     */
+    public function assertConfigured(): void
+    {
+        $this->hasher->assertConfigured();
+    }
 
     /**
      * @param  array<string, mixed>  $changes
@@ -104,39 +116,74 @@ class AuditLogger
     public function verify(): AuditVerification
     {
         try {
-            $this->hasher->assertConfigured();
+            $this->assertConfigured();
         } catch (Throwable $exception) {
             return AuditVerification::configurationError($exception->getMessage());
+        }
+
+        // La contrainte unique protège déjà la séquence en écriture. Ce
+        // contrôle explicite couvre une base restaurée ou altérée dont
+        // l'index unique aurait disparu.
+        $duplicate = AuditEvent::query()
+            ->select('sequence')
+            ->groupBy('sequence')
+            ->havingRaw('COUNT(*) > 1')
+            ->first();
+
+        if ($duplicate !== null) {
+            $event = AuditEvent::query()->where('sequence', $duplicate->sequence)->first();
+
+            if ($event !== null) {
+                return AuditVerification::broken(0, $event, 'Séquence dupliquée.');
+            }
         }
 
         $previousHash = null;
         $previousSequence = 0;
         $checked = 0;
+        $lastSequence = null;
 
-        foreach (AuditEvent::query()->orderBy('sequence')->lazyById(500, 'id') as $event) {
-            $checked++;
+        // Pagination par clé sur `sequence`, jamais par `id` : les
+        // identifiants SQL ne sont pas garantis corrélés à l'ordre logique.
+        // Chaque lot est borné à VERIFY_BATCH_SIZE événements en mémoire.
+        do {
+            $query = AuditEvent::query()
+                ->orderBy('sequence')
+                ->limit(self::VERIFY_BATCH_SIZE);
 
-            if ($event->sequence !== $previousSequence + 1) {
-                return AuditVerification::broken($checked - 1, $event, 'Séquence non contiguë.');
+            if ($lastSequence !== null) {
+                $query->where('sequence', '>', $lastSequence);
             }
 
-            if ($event->previous_hash !== $previousHash) {
-                return AuditVerification::broken($checked - 1, $event, 'Chaîne précédente incohérente.');
-            }
+            $events = $query->get();
 
-            try {
-                $valid = $this->hasher->verify($this->hasher->fieldsFor($event), $event->hash);
-            } catch (Throwable $exception) {
-                return AuditVerification::broken($checked - 1, $event, $exception->getMessage());
-            }
+            foreach ($events as $event) {
+                $checked++;
+                $sequence = (int) $event->sequence;
 
-            if (! $valid) {
-                return AuditVerification::broken($checked - 1, $event, 'Signature de l’événement invalide.');
-            }
+                if ($sequence !== $previousSequence + 1) {
+                    return AuditVerification::broken($checked - 1, $event, 'Séquence non contiguë.');
+                }
 
-            $previousHash = $event->hash;
-            $previousSequence = $event->sequence;
-        }
+                if ($event->previous_hash !== $previousHash) {
+                    return AuditVerification::broken($checked - 1, $event, 'Chaîne précédente incohérente.');
+                }
+
+                try {
+                    $valid = $this->hasher->verify($this->hasher->fieldsFor($event), $event->hash);
+                } catch (Throwable $exception) {
+                    return AuditVerification::broken($checked - 1, $event, $exception->getMessage());
+                }
+
+                if (! $valid) {
+                    return AuditVerification::broken($checked - 1, $event, 'Signature de l’événement invalide.');
+                }
+
+                $previousHash = $event->hash;
+                $previousSequence = $sequence;
+                $lastSequence = $sequence;
+            }
+        } while ($events->count() === self::VERIFY_BATCH_SIZE);
 
         return AuditVerification::valid($checked);
     }
