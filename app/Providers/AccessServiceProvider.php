@@ -5,11 +5,29 @@ namespace App\Providers;
 use App\Enums\Permission;
 use App\Listeners\AuditAuthenticationEvents;
 use App\Models\AuditEvent;
+use App\Models\Client;
+use App\Models\Employee;
+use App\Models\EmploymentPeriod;
 use App\Models\PermissionException;
+use App\Models\PlanningAssignment;
+use App\Models\Site;
+use App\Models\Team;
+use App\Models\TeamAssignment;
+use App\Models\TeamLeadership;
+use App\Models\Timesheet;
 use App\Models\User;
 use App\Observers\UserObserver;
 use App\Policies\AuditEventPolicy;
+use App\Policies\ClientPolicy;
+use App\Policies\EmployeePolicy;
+use App\Policies\EmploymentPeriodPolicy;
 use App\Policies\PermissionExceptionPolicy;
+use App\Policies\PlanningAssignmentPolicy;
+use App\Policies\SitePolicy;
+use App\Policies\TeamAssignmentPolicy;
+use App\Policies\TeamLeadershipPolicy;
+use App\Policies\TeamPolicy;
+use App\Policies\TimesheetPolicy;
 use App\Policies\UserPolicy;
 use Illuminate\Auth\Events\Failed;
 use Illuminate\Auth\Events\Login;
@@ -37,7 +55,16 @@ class AccessServiceProvider extends ServiceProvider
 
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(AuditEvent::class, AuditEventPolicy::class);
+        Gate::policy(Client::class, ClientPolicy::class);
+        Gate::policy(Site::class, SitePolicy::class);
         Gate::policy(PermissionException::class, PermissionExceptionPolicy::class);
+        Gate::policy(Employee::class, EmployeePolicy::class);
+        Gate::policy(EmploymentPeriod::class, EmploymentPeriodPolicy::class);
+        Gate::policy(Team::class, TeamPolicy::class);
+        Gate::policy(TeamAssignment::class, TeamAssignmentPolicy::class);
+        Gate::policy(TeamLeadership::class, TeamLeadershipPolicy::class);
+        Gate::policy(PlanningAssignment::class, PlanningAssignmentPolicy::class);
+        Gate::policy(Timesheet::class, TimesheetPolicy::class);
 
         User::observe(UserObserver::class);
 

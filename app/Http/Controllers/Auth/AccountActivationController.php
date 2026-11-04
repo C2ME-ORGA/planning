@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Auth;
 
+use App\Enums\Role;
 use App\Http\Controllers\Controller;
 use App\Services\Accounts\AccountActivationService;
 use App\Services\Accounts\AccountProvisioner;
@@ -44,10 +45,14 @@ class AccountActivationController extends Controller
             'password' => ['required', 'confirmed', Password::defaults()],
         ]);
 
-        $this->accounts->activate($activation, $validated['password']);
+        $user = $this->accounts->activate($activation, $validated['password']);
+
+        $loginRoute = $user->role === Role::Admin || $user->role === Role::BureauDirection
+            ? 'filament.admin.auth.login'
+            : 'login';
 
         return redirect()
-            ->route('filament.admin.auth.login')
+            ->route($loginRoute)
             ->with('status', 'Votre compte est activé. Vous pouvez vous connecter.');
     }
 }

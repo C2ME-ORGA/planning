@@ -21,6 +21,15 @@ beforeEach(function () {
     Artisan::call('migrate:fresh', ['--force' => true]);
 });
 
+// Ce fichier committe de vraies transactions pour exercer afterCommit().
+// Il doit rendre la base propre après chaque test pour que les fichiers
+// Feature exécutés ensuite dans la même invocation ne voient pas ces
+// données commitées. Le nettoyage se fait avant la destruction de
+// l'application, contrairement à afterAll.
+afterEach(function () {
+    Artisan::call('migrate:fresh', ['--force' => true]);
+});
+
 it('dispatches the activation notification only after the outer transaction commits', function () {
     Notification::fake();
 

@@ -2,12 +2,16 @@
 
 namespace App\Console\Commands;
 
+use App\Console\Commands\Concerns\ResolvesCliActor;
 use App\Enums\AuditAction;
-use App\Exceptions\PartialSessionRevocationException;
+use App\Enums\Permission;
+use App\Exceptions\UserFacingException;
+use App\Models\User;
+use App\Services\Accounts\AccountAdministration;
+use App\Services\Accounts\SessionRevocationException;
 use App\Services\Accounts\SessionRevoker;
 use App\Services\Audit\AuditLogger;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 use Throwable;
 
 /**
@@ -15,110 +19,145 @@ use Throwable;
  *
  * Cette commande ne crée, ne restaure et ne contourne aucun droit métier.
  * Aucun mécanisme de "break-glass" accordant un accès n'existe dans le MVP.
+ * Elle exige un compte habilité et un motif, et refuse de démarrer si
+ * l'événement d'intention ne peut pas être audité.
  */
 class EmergencyLockdownCommand extends Command
 {
-    protected $signature = 'planning:emergency-lockdown {--confirm : Confirme la révocation de toutes les sessions}';
+    use ResolvesCliActor;
+
+    protected $signature = 'planning:emergency-lockdown
+        {--actor= : Compte habilité qui déclenche le verrouillage}
+        {--reason= : Justification obligatoire}
+        {--confirm : Confirme la révocation de toutes les sessions}';
 
     protected $description = 'Révoque immédiatement toutes les sessions et jetons persistants, sans accorder de droit.';
 
-    public function handle(SessionRevoker $sessions, AuditLogger $audit): int
-    {
+    public function handle(
+        SessionRevoker $sessions,
+        AuditLogger $audit,
+        AccountAdministration $accounts,
+    ): int {
         if (! $this->option('confirm')) {
             $this->error('Ajoutez --confirm pour révoquer toutes les sessions.');
 
             return self::FAILURE;
         }
 
-        try {
-            $audit->assertConfigured();
-        } catch (Throwable $exception) {
-            $this->error('Configuration d’audit invalide : '.$exception->getMessage());
+        $actor = $this->resolveActorWith(Permission::AccountsUpdate);
 
+        if ($actor === null) {
             return self::FAILURE;
         }
 
-        $distinctConnection = $sessions->usesDistinctConnection();
-        $sessionsDeleted = 0;
-        $rememberTokensRotated = false;
+        $reason = trim((string) $this->option('reason'));
 
         try {
-            if ($distinctConnection) {
-                // Connexion de sessions distincte : ne pas englober l’audit
-                // dans la transaction de la connexion par défaut, sinon un
-                // échec d’audit annulerait les remember tokens déjà renouvelés.
-                $revoked = $sessions->revokeAll();
-                $sessionsDeleted = $revoked;
-                $rememberTokensRotated = true;
-
-                $audit->record(
-                    AuditAction::EmergencyLockdown,
-                    null,
-                    ['sessions_revoked' => $revoked],
-                    'Révocation globale des sessions via la procédure d’urgence.',
-                );
-            } else {
-                // Connexion identique : la révocation et l’audit partagent la
-                // même transaction et sont annulés ensemble en cas d’échec.
-                $revoked = DB::transaction(function () use (
-                    $sessions,
-                    $audit,
-                    &$sessionsDeleted,
-                    &$rememberTokensRotated,
-                ): int {
-                    $revoked = $sessions->revokeAll();
-                    $sessionsDeleted = $revoked;
-                    $rememberTokensRotated = true;
-
-                    $audit->record(
-                        AuditAction::EmergencyLockdown,
-                        null,
-                        ['sessions_revoked' => $revoked],
-                        'Révocation globale des sessions via la procédure d’urgence.',
-                    );
-
-                    return $revoked;
-                });
-            }
-        } catch (PartialSessionRevocationException $exception) {
-            $this->error($this->partialMessage($exception));
-
-            return self::FAILURE;
+            $accounts->assertReason($reason);
         } catch (Throwable $exception) {
-            if ($distinctConnection && $rememberTokensRotated) {
-                $message = $sessionsDeleted > 0
-                    ? "Révocation partielle : {$sessionsDeleted} session(s) supprimée(s) sur la connexion dédiée. Les remember tokens ont été renouvelés. L’audit n’a pas été enregistré. Une vérification opérationnelle est requise."
-                    : 'Révocation incomplète : aucune session n’a été supprimée. Les remember tokens ont été renouvelés. L’audit n’a pas été enregistré. Une vérification opérationnelle est requise.';
-
-                $this->error($message.' '.$exception->getMessage());
-            } elseif ($distinctConnection) {
-                $this->error(
-                    'Opération non exécutée : aucune session n’a été supprimée. '
-                    .$exception->getMessage()
-                );
+            if ($exception instanceof UserFacingException) {
+                $this->error($exception->getMessage());
             } else {
-                $this->error(
-                    'Révocation annulée : aucune session n’a été supprimée. '
-                    .$exception->getMessage()
-                );
+                report($exception);
+                $this->error('Le motif est invalide.');
             }
 
             return self::FAILURE;
         }
 
-        $this->info("{$revoked} session(s) révoquée(s). Aucun droit supplémentaire n’a été accordé.");
+        try {
+            $audit->record(
+                AuditAction::EmergencyLockdownRequested,
+                null,
+                ['scope' => 'global'],
+                $reason,
+                $actor,
+            );
+        } catch (Throwable $exception) {
+            $this->error(
+                'Le verrouillage est refusé : l’événement d’intention ne peut pas être audité. '
+                .'Aucune session n’a été révoquée.',
+            );
+            report($exception);
+
+            return self::FAILURE;
+        }
+
+        try {
+            $result = $sessions->revokeAll();
+        } catch (SessionRevocationException $exception) {
+            $this->recordFailure($audit, $exception, $reason, $actor);
+            $this->error($exception->getMessage());
+
+            return self::FAILURE;
+        }
+
+        try {
+            $audit->record(
+                AuditAction::EmergencyLockdown,
+                null,
+                [
+                    'global_generation' => $result->generation,
+                    'sessions_revoked' => $result->deletedSessions,
+                    'session_storage' => $result->sessionDriver,
+                    'physical_cleanup_required' => $result->physicalCleanupRequired,
+                    'physical_cleanup_state' => $result->physicalCleanupState()->value,
+                    'physical_cleanup_error' => $result->physicalError,
+                    'fully_completed' => ! $result->hasPhysicalCleanupFailure(),
+                ],
+                $reason,
+                $actor,
+            );
+        } catch (Throwable $exception) {
+            $this->error(
+                'La révocation logique est effective, mais l’audit final est indisponible. '
+                .'Vérifiez la génération globale et le journal d’audit.',
+            );
+            report($exception);
+
+            return self::FAILURE;
+        }
+
+        $this->info(
+            "Génération globale {$result->generation} active : toutes les anciennes sessions et cookies persistants sont invalides.",
+        );
+
+        if ($result->hasPhysicalCleanupFailure()) {
+            $this->warn(
+                'La révocation logique est effective, mais le nettoyage physique des sessions a échoué. '
+                .'Les anciennes sessions restent inutilisables ; vérifiez le stockage de sessions.',
+            );
+
+            return self::FAILURE;
+        }
+
+        $this->info("{$result->deletedSessions} session(s) supprimée(s) du stockage physique.");
 
         return self::SUCCESS;
     }
 
-    private function partialMessage(PartialSessionRevocationException $exception): string
-    {
-        $cause = $exception->getPrevious()?->getMessage();
-
-        $message = $exception->deletedSessions > 0
-            ? "Révocation partielle : {$exception->deletedSessions} session(s) supprimée(s) sur la connexion dédiée, mais le renouvellement des remember tokens a échoué. Aucun audit de réussite n’a été enregistré. Une vérification opérationnelle est requise."
-            : 'Opération incomplète : aucune session n’a été supprimée, mais le renouvellement des remember tokens a échoué. Aucun audit de réussite n’a été enregistré. Une vérification opérationnelle est requise.';
-
-        return $cause === null ? $message : $message.' '.$cause;
+    private function recordFailure(
+        AuditLogger $audit,
+        SessionRevocationException $exception,
+        string $reason,
+        User $actor,
+    ): void {
+        try {
+            $audit->record(
+                AuditAction::SessionRevocationFailed,
+                null,
+                [
+                    'scope' => $exception->scope,
+                    'step' => $exception->step,
+                    'error_class' => $exception->getPrevious() === null
+                        ? null
+                        : $exception->getPrevious()::class,
+                ],
+                $reason,
+                $actor,
+            );
+        } catch (Throwable $auditFailure) {
+            report($auditFailure);
+        }
     }
 }

@@ -10,6 +10,7 @@ use App\Services\Access\PermissionExceptionService;
 use App\Services\Audit\AuditLogger;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\ValidationException;
 
 it('applies the approved role matrix on the server', function () {
     $expected = [
@@ -24,11 +25,23 @@ it('applies the approved role matrix on the server', function () {
             Permission::RolesAssign,
             Permission::AuditView,
             Permission::PermissionExceptionsManage,
+            Permission::EmployeesView,
+            Permission::EmployeesManage,
+            Permission::TeamsView,
+            Permission::TeamsManage,
             Permission::PlanningManage,
+            Permission::TimesheetOwn,
             Permission::TimesheetValidate,
+            Permission::TimesheetOverlapReview,
             Permission::WorkflowCorrect,
             Permission::WorkflowReopen,
             Permission::AbsenceManage,
+            Permission::ClientsView,
+            Permission::ClientsManage,
+            Permission::ClientsRestore,
+            Permission::SitesView,
+            Permission::SitesManage,
+            Permission::SitesReopen,
         ],
         Role::Conducteur->value => [
             Permission::PlanningPropose,
@@ -60,20 +73,51 @@ it('applies the approved role matrix on the server', function () {
     }
 });
 
+it('keeps client restoration on the combined Bureau/Direction role only', function () {
+    $holders = array_values(array_filter(
+        Role::cases(),
+        static fn (Role $role): bool => $role->hasPermission(Permission::ClientsRestore),
+    ));
+
+    // Le référentiel ne distingue pas « Bureau » de « Direction » : le rôle
+    // unique `bureau_direction` porte la permission. L'écart avec l'arbitrage
+    // « Direction seule » est documenté dans docs/PC1-28-DECISIONS.md.
+    expect($holders)->toBe([Role::BureauDirection])
+        ->and(array_key_exists('direction', Role::options()))->toBeFalse();
+});
+
 it('never grants business rights to the technical administrator', function () {
     $admin = User::factory()->admin()->create();
 
     foreach (Permission::cases() as $permission) {
-        if (in_array($permission, [Permission::AuditView, Permission::PermissionExceptionsManage], true)) {
-            continue;
-        }
-
-        expect($admin->hasPermission($permission))->toBeFalse($permission->value);
+        expect($admin->hasPermission($permission))
+            ->toBe($permission === Permission::AuditView, "administrateur / {$permission->value}");
     }
 
-    expect($admin->hasPermission(Permission::AuditView))->toBeTrue()
-        ->and($admin->can('create', User::class))->toBeFalse()
+    expect($admin->can('create', User::class))->toBeFalse()
         ->and($admin->can('viewAny', User::class))->toBeFalse();
+});
+
+it('ignores permission exceptions granted directly to the technical administrator', function () {
+    $admin = User::factory()->admin()->create();
+    $actor = User::factory()->bureauDirection()->create();
+
+    // Exception métier active créée directement en base, hors service : elle ne
+    // doit jamais élargir les droits du rôle technique.
+    PermissionException::query()->create([
+        'user_id' => $admin->id,
+        'permission' => Permission::PlanningPropose,
+        'reason' => 'Exception posée directement en base pour tester la résistance.',
+        'granted_by_id' => $actor->id,
+        'granted_at' => now(),
+        'expires_at' => now()->addDays(10),
+    ]);
+
+    $admin->refresh();
+
+    expect(PermissionException::query()->where('user_id', $admin->id)->active()->count())->toBe(1)
+        ->and($admin->hasPermission(Permission::PlanningPropose))->toBeFalse()
+        ->and($admin->hasPermission(Permission::AuditView))->toBeTrue();
 });
 
 it('revokes every permission from an inactive account', function () {
@@ -197,7 +241,7 @@ it('requires a Bureau reason before approving its own production', function () {
         ->and($rules->canApprove($chef, $owner->id))->toBeFalse()
         ->and($rules->canApprove($chef, $chef->id))->toBeFalse();
 
-    expect(fn () => $rules->recordSelfApproval($bureau, $bureau->id, $owner, 'Court'))->toThrow(RuntimeException::class);
+    expect(fn () => $rules->recordSelfApproval($bureau, $bureau->id, $owner, 'Court'))->toThrow(ValidationException::class);
     expect(fn () => $rules->recordSelfApproval($chef, $chef->id, $owner, 'Auto-validation du chef.'))->toThrow(RuntimeException::class);
 
     $event = $rules->recordSelfApproval(

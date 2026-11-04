@@ -19,6 +19,7 @@ enum AuditAction: string
     case AccountDeactivated = 'account.deactivated';
     case AccountReactivated = 'account.reactivated';
     case SessionsRevoked = 'account.sessions_revoked';
+    case SessionRevocationFailed = 'account.session_revocation_failed';
     case MfaEnabled = 'account.mfa_enabled';
     case MfaDisabled = 'account.mfa_disabled';
     case MfaReset = 'account.mfa_reset';
@@ -27,8 +28,52 @@ enum AuditAction: string
     case PermissionExceptionGranted = 'permission_exception.granted';
     case PermissionExceptionRevoked = 'permission_exception.revoked';
 
+    case EmployeeCreated = 'employee.created';
+    case EmployeeUpdated = 'employee.updated';
+    case EmployeeAccountLinked = 'employee.account_linked';
+    case EmployeeAccountUnlinked = 'employee.account_unlinked';
+    case EmploymentPeriodAdded = 'employment_period.added';
+    case EmployeeRehired = 'employee.rehired';
+    case EmployeeExited = 'employee.exited';
+
+    case TeamCreated = 'team.created';
+    case TeamUpdated = 'team.updated';
+    case TeamAssignmentCreated = 'team_assignment.created';
+    case TeamAssignmentClosed = 'team_assignment.closed';
+    case TeamAssignmentCancelled = 'team_assignment.cancelled';
+    case TeamLeaderAssigned = 'team_leader.assigned';
+    case TeamLeaderReassigned = 'team_leader.reassigned';
+    case TeamLeaderClosed = 'team_leader.closed';
+    case TeamLeaderCancelled = 'team_leader.cancelled';
+
+    case ClientCreated = 'client.created';
+    case ClientUpdated = 'client.updated';
+    case ClientArchived = 'client.archived';
+    case ClientRestored = 'client.restored';
+    case SiteCreated = 'site.created';
+    case SiteUpdated = 'site.updated';
+    case SiteArchived = 'site.archived';
+    case SiteStatusChanged = 'site.status_changed';
+    case SiteReopened = 'site.reopened';
+
+    case PlanningAssignmentCreated = 'planning.assignment_created';
+    case PlanningAssignmentUpdated = 'planning.assignment_updated';
+
+    case TimesheetCreated = 'timesheet.created';
+    case TimesheetUpdated = 'timesheet.updated';
+    case TimesheetSubmitted = 'timesheet.submitted';
+    case TimesheetSentToValidation = 'timesheet.sent_to_validation';
+    case TimesheetReturnedForCorrection = 'timesheet.returned_for_correction';
+    case TimesheetCorrectionResumed = 'timesheet.correction_resumed';
+    case TimesheetReadyForValidation = 'timesheet.ready_for_validation';
+    case TimesheetValidated = 'timesheet.validated';
+    case TimesheetReopened = 'timesheet.reopened';
+    case TimesheetOverlapReviewAccepted = 'timesheet.overlap_review_accepted';
+    case TimesheetOverlapReviewRejected = 'timesheet.overlap_review_rejected';
+
     case SelfApprovalRecorded = 'approval.self_approval_recorded';
 
+    case EmergencyLockdownRequested = 'system.emergency_lockdown_requested';
     case EmergencyLockdown = 'system.emergency_lockdown';
 
     public function label(): string
@@ -48,13 +93,53 @@ enum AuditAction: string
             self::AccountDeactivated => 'Compte désactivé',
             self::AccountReactivated => 'Compte réactivé',
             self::SessionsRevoked => 'Sessions révoquées',
+            self::SessionRevocationFailed => 'Échec de révocation des sessions',
             self::MfaEnabled => 'Double authentification activée',
             self::MfaDisabled => 'Double authentification désactivée',
             self::MfaReset => 'Double authentification réinitialisée',
             self::BootstrapBureauCreated => 'Bootstrap Bureau / Direction',
             self::PermissionExceptionGranted => 'Exception de permission accordée',
             self::PermissionExceptionRevoked => 'Exception de permission révoquée',
+            self::EmployeeCreated => 'Salarié créé',
+            self::EmployeeUpdated => 'Salarié modifié',
+            self::EmployeeAccountLinked => 'Compte lié au salarié',
+            self::EmployeeAccountUnlinked => 'Compte délié du salarié',
+            self::EmploymentPeriodAdded => 'Période d’emploi ajoutée',
+            self::EmployeeRehired => 'Salarié réembauché',
+            self::EmployeeExited => 'Sortie du salarié enregistrée',
+            self::TeamCreated => 'Équipe créée',
+            self::TeamUpdated => 'Équipe modifiée',
+            self::TeamAssignmentCreated => 'Affectation d’équipe créée',
+            self::TeamAssignmentClosed => 'Affectation d’équipe clôturée',
+            self::TeamAssignmentCancelled => 'Affectation d’équipe annulée',
+            self::TeamLeaderAssigned => 'Responsable d’équipe désigné',
+            self::TeamLeaderReassigned => 'Responsable d’équipe réaffecté',
+            self::TeamLeaderClosed => 'Responsabilité d’équipe clôturée',
+            self::TeamLeaderCancelled => 'Responsabilité d’équipe annulée',
+            self::ClientCreated => 'Client créé',
+            self::ClientUpdated => 'Client modifié',
+            self::ClientArchived => 'Client archivé',
+            self::ClientRestored => 'Client restauré',
+            self::SiteCreated => 'Chantier créé',
+            self::SiteUpdated => 'Chantier modifié',
+            self::SiteArchived => 'Chantier archivé',
+            self::SiteStatusChanged => 'Statut du chantier modifié',
+            self::SiteReopened => 'Chantier réouvert',
+            self::PlanningAssignmentCreated => 'Affectation de planning créée',
+            self::PlanningAssignmentUpdated => 'Affectation de planning modifiée',
+            self::TimesheetCreated => 'Relevé d’heures créé',
+            self::TimesheetUpdated => 'Relevé d’heures modifié',
+            self::TimesheetSubmitted => 'Relevé transmis',
+            self::TimesheetSentToValidation => 'Relevé transmis directement à la validation',
+            self::TimesheetReturnedForCorrection => 'Relevé retourné en correction',
+            self::TimesheetCorrectionResumed => 'Reprise du relevé en correction',
+            self::TimesheetReadyForValidation => 'Relevé prêt pour validation',
+            self::TimesheetValidated => 'Relevé validé',
+            self::TimesheetReopened => 'Relevé réouvert',
+            self::TimesheetOverlapReviewAccepted => 'Chevauchement accepté',
+            self::TimesheetOverlapReviewRejected => 'Chevauchement rejeté',
             self::SelfApprovalRecorded => 'Auto-validation motivée',
+            self::EmergencyLockdownRequested => 'Verrouillage d’urgence demandé',
             self::EmergencyLockdown => 'Verrouillage d’urgence',
         };
     }

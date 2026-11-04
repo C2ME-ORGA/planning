@@ -4,11 +4,14 @@ namespace App\Filament\Resources\Users\Pages;
 
 use App\Enums\Role;
 use App\Filament\Resources\Users\UserResource;
+use App\Filament\Support\ActionFeedback;
 use App\Models\User;
 use App\Services\Accounts\AccountAdministration;
 use Filament\Actions\ViewAction;
 use Filament\Resources\Pages\EditRecord;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class EditUser extends EditRecord
 {
@@ -33,7 +36,13 @@ class EditUser extends EditRecord
             $role = Role::from($data['role']);
             unset($data['role']);
 
-            app(AccountAdministration::class)->changeRole($record, $role, $actor);
+            try {
+                app(AccountAdministration::class)->changeRole($record, $role, $actor);
+            } catch (Throwable $exception) {
+                throw ValidationException::withMessages([
+                    'data.role' => ActionFeedback::message($exception),
+                ]);
+            }
         }
 
         $record->update($data);
